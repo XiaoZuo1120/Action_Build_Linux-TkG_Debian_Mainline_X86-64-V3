@@ -17,13 +17,18 @@ fi
 
 # 1. 获取当前本地配置的版本
 CURRENT_VER=$(grep '^_version=' "$CFG_FILE" | head -n 1 | sed 's/_version=//; s/"//g; s/^ *//; s/ *$//')
-echo "📄 本地配置文件版本: ${CURRENT_VER}"
+echo "📄 本地配置文件版本: ${CURRENT_VER:-<空>}"
 
 # 2. 从 kernel.org 获取最新的 Tag
 echo "🌐 正在查询 kernel.org 最新标签..."
 
-# 获取主线最新 tag (包含 rc)
-LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git | grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?$' | head -n 1 | sed 's|refs/tags/||')
+# 优化 grep 顺序，避免 Broken pipe 警告
+# 先过滤出 refs/tags/v... 格式，再排序，取最后一个
+LATEST_TAG=$(git ls-remote --tags https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git | \
+             grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?$' | \
+             sort -V | \
+             tail -n 1 | \
+             sed 's|refs/tags/||')
 
 if [ -z "$LATEST_TAG" ]; then
     echo -e "${RED}❌ 错误: 无法从 kernel.org 获取最新版本标签${NC}"
@@ -36,7 +41,8 @@ TARGET_VERSION="${LATEST_TAG#v}"
 echo -e "${GREEN}✅ 检测到最新内核版本: ${TARGET_VERSION}${NC}"
 
 # 3. 比较版本
-FORCE_BUILD="${{ github.event.inputs.force_build }}"
+# 使用环境变量 FORCE_BUILD，默认值为 false
+FORCE_BUILD="${FORCE_BUILD:-false}"
 
 if [ "$CURRENT_VER" == "$TARGET_VERSION" ] && [ "$FORCE_BUILD" != "true" ]; then
     echo -e "${GREEN}✨ 版本已是最新 (${CURRENT_VER})，跳过构建。${NC}"
@@ -46,6 +52,7 @@ else
     echo -e "${YELLOW}🚀 版本变更或强制构建！(${CURRENT_VER} -> ${TARGET_VERSION})${NC}"
     
     # 4. 更新本地 cfg
+    # 使用 sed 替换 _version 行
     sed -i "s|^_version=.*|_version=\"${TARGET_VERSION}\"|" "$CFG_FILE"
     echo -e "${GREEN}📝 已更新本地 $CFG_FILE 中的 _version 为 ${TARGET_VERSION}${NC}"
 
