@@ -1,0 +1,147 @@
+name: 🐧 Build Linux-TkG Kernel (Debian/Sid)
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '🔨 强制重新编译 (即使版本未变)'
+        required: false
+        default: 'false'
+        type: boolean
+  schedule:
+    - cron: '0 2 * * 2' # 每周二 UTC 02:00 (北京时间周二 10:00) - 最佳捕获 RC 发布时间
+
+env:
+  TKG_DIR: linux-tkg
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  prepare-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 允许推送代码更新 cfg
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取完整历史以便 push
+
+      - name: 🧹 Free Disk Space (Slimhub)
+        uses: rokibhasansagar/slimhub_actions@main
+
+      - name: 🔍 Check Latest Kernel Version from Kernel.org
+        id: check_version
+        run: |
+          chmod +x check_version.sh
+          ./check_version.sh
+
+      - name: ⏭️ Skip Build if Up-to-date
+        if: env.SKIP_BUILD == 'true'
+        run: |
+          echo "✅ 内核版本已是最新，无需操作。"
+          exit 0
+
+      - name: 📅 Generate Build Timestamp
+        if: env.SKIP_BUILD != 'true'
+        id: timestamp
+        run: |
+          # 生成 YYYYMMDDHHMM 格式的时间戳
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M")
+          echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          echo "Generated Timestamp: $TIMESTAMP"
+
+      - name: 📦 Install Build Dependencies
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git bc bison flex libssl-dev libelf-dev make gcc clang lld llvm \
+            fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
+            rsync zstd
+
+      - name: 🛠️ Clone Linux-TkG & Build Kernel
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          # 只有在确定要构建时才克隆 tkg 仓库
+          echo "📥 克隆 linux-tkg 仓库..."
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+          
+          cd $TKG_DIR
+          
+          # 将更新后的 customization.cfg 复制到 tkg 目录
+          cp ../customization.cfg ./customization.cfg
+          
+          echo "--- 📋 当前构建配置 ---"
+          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" customization.cfg
+          echo "----------------------"
+
+          # 开始编译
+          yes '' | ./install.sh install
+
+      - name: 🗑️ Cleanup Artifacts & Source
+        if: always()
+        run: |
+          # 删除巨大的源码目录以节省空间和上传时间
+          if [ -d "$TKG_DIR/linux-src-git" ]; then
+            echo "🗑️ 删除源码目录..."
+            rm -rf $TKG_DIR/linux-src-git
+          fi
+          
+          # 清理不必要的 deb 包
+          if [ -d "$TKG_DIR/DEBS" ]; then
+            echo "🗑️ 清理调试符号包..."
+            rm -f $TKG_DIR/DEBS/*dbg*.deb
+            rm -f $TKG_DIR/DEBS/*libc-dev*.deb
+            echo "📦 剩余包列表:"
+            ls -lh $TKG_DIR/DEBS/
+          fi
+
+      - name: 📤 Upload Kernel Packages as Artifact
+        if: env.SKIP_BUILD != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tkg-debs-${{ env.NEW_VERSION || 'latest' }}
+          path: |
+            ${{ env.TKG_DIR }}/DEBS/*.deb
+            ${{ env.TKG_DIR }}/kernelconfig.new
+          retention-days: 7
+
+      - name: 🏷️ Create GitHub Release
+        if: env.SKIP_BUILD != 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          # 使用时间戳作为后缀，格式: v6.13-rc5-202310271200
+          tag_name: v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
+          name: Linux-TkG ${{ env.NEW_VERSION }} (Built on ${{ env.BUILD_TIMESTAMP }})
+          body: |
+            Automated build of Linux-TkG kernel for Debian Sid.
+            
+            **Configuration:**
+            - Scheduler: BORE
+            - Compiler: Clang (LLVM)
+            - LTO: Thin
+            - Arch Optimization: x86-64-v3
+            
+            **Changes:**
+            - Updated to kernel version: ${{ env.NEW_VERSION }}
+            - Build Timestamp: ${{ env.BUILD_TIMESTAMP }}
+          files: |
+            ${{ env.TKG_DIR }}/DEBS/*.deb
+            ${{ env.TKG_DIR }}/kernelconfig.new
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 💾 Commit Updated Config
+        if: env.VERSION_CHANGED == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add customization.cfg
+          git commit -m "chore: update kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+          git push
+
+      - name: ❌ Notify Failure
+        if: failure()
+        run: |
+          echo "❌ 构建失败！请检查上方日志。"
