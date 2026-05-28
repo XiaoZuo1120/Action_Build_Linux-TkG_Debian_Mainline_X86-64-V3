@@ -1,5 +1,4 @@
 name: Build Ubuntu kernel
-on:
  
 on:
   workflow_dispatch:
