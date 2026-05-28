@@ -9,7 +9,7 @@ on:
         default: 'false'
         type: boolean
   schedule:
-    - cron: '0 2 * * 2' # 每周二 UTC 02:00 (北京时间周二 10:00) - 最佳捕获 RC 发布时间
+    - cron: '0 2 * * 2' # 每周二 UTC 02:00 (北京时间周二 10:00)
 
 env:
   TKG_DIR: linux-tkg
@@ -19,37 +19,36 @@ jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 允许推送代码更新 cfg
+      contents: write
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 获取完整历史以便 push
+          fetch-depth: 0
 
-
-      - name: 🔍 Check Latest Kernel Version from Kernel.org
+      - name: 🔍 Check Latest Kernel Version
         id: check_version
         run: |
           chmod +x check_version.sh
+          # 传递 FORCE_BUILD 环境变量给脚本
+          export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version.sh
 
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
-          echo "✅ 内核版本已是最新，无需操作。"
+          echo "✅ 内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
 
-
-      - name: 🧹 Free Disk Space (Slimhub)
+      - name: 🧹 Free Disk Space
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
-        
+
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
         run: |
-          # 生成 YYYYMMDDHHMM 格式的时间戳
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
@@ -61,25 +60,43 @@ jobs:
           sudo apt-get install -y \
             git bc bison flex libssl-dev libelf-dev make gcc clang lld llvm \
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
-            rsync zstd
+            rsync zstd unzip curl
 
-      - name: 🛠️ Clone Linux-TkG & Build Kernel
+      - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
-          # 只有在确定要构建时才克隆 tkg 仓库
+          git config --global http.postBuffer 524288000
+          git config --global core.compression 9
+
+      - name: 🛠️ Clone Linux-TkG, Apply BORE & Build
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          # 1. 克隆 TKG 仓库
           echo "📥 克隆 linux-tkg 仓库..."
           git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          
+
+          # 2. 【关键】在 Clone 之后，运行 BORE 适配脚本
+          # 此时 ./linux-tkg 目录已存在，脚本可以安全地将补丁写入 ./linux-tkg/linux-tkg-patches/
+          # 并且脚本会修改【当前根目录】的 customization.cfg
+          if [ -f "./auto_bore_setup.sh" ]; then
+            echo "🚀 正在执行 BORE 自动适配..."
+            chmod +x ./auto_bore_setup.sh
+            ./auto_bore_setup.sh
+          else
+            echo "⚠️ 未找到 auto_bore_setup.sh，跳过 BORE 适配。"
+          fi
+
           cd $TKG_DIR
-          
-          # 将更新后的 customization.cfg 复制到 tkg 目录
+
+          # 3. 将【已修改好】的根目录 cfg 复制进 TKG 目录
+          # 此时 cfg 里的 _cpusched 已经是 bore 或 eevdf 了
           cp ../customization.cfg ./customization.cfg
-          
-          echo "--- 📋 当前构建配置 ---"
+
+          echo "--- 📋 最终构建配置 ---"
           grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" customization.cfg
           echo "----------------------"
 
-          # 开始编译
+          # 4. 开始编译
           yes '' | ./install.sh install
 
       - name: 🗑️ Cleanup Artifacts & Source
@@ -90,7 +107,7 @@ jobs:
             echo "🗑️ 删除源码目录..."
             rm -rf $TKG_DIR/linux-src-git
           fi
-          
+
           # 清理不必要的 deb 包
           if [ -d "$TKG_DIR/DEBS" ]; then
             echo "🗑️ 清理调试符号包..."
@@ -114,18 +131,17 @@ jobs:
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
         with:
-          # 使用时间戳作为后缀，格式: v6.13-rc5-202310271200
           tag_name: v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
           name: Linux-TkG ${{ env.NEW_VERSION }} (Built on ${{ env.BUILD_TIMESTAMP }})
           body: |
             Automated build of Linux-TkG kernel for Debian Sid.
-            
+
             **Configuration:**
-            - Scheduler: BORE
+            - Scheduler: ${{ env.CPU_SCHEDULER || 'Auto-Detected' }}
             - Compiler: Clang (LLVM)
             - LTO: Thin
             - Arch Optimization: x86-64-v3
-            
+
             **Changes:**
             - Updated to kernel version: ${{ env.NEW_VERSION }}
             - Build Timestamp: ${{ env.BUILD_TIMESTAMP }}
