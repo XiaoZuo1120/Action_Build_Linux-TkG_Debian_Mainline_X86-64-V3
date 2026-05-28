@@ -19,18 +19,18 @@ fi
 CURRENT_VER=$(grep '^_version=' "$CFG_FILE" | head -n 1 | sed 's/_version=//; s/"//g; s/^ *//; s/ *$//')
 echo "📄 本地配置文件版本: ${CURRENT_VER:-<空>}"
 
-# 2. 从 kernel.org 获取最新的 Tag
-echo "🌐 正在查询 kernel.org 最新标签..."
+# 2. 从 Github 获取最新的 Tag
+echo "🌐 正在查询 Github 最新标签..."
 
 # 获取主线最新 tag (包含 rc)
 # 注意：这里我们不再去掉 'v'，因为 linux-tkg 需要完整的 tag 名
-LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git | \
+LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/torvalds/linux.git | \
              grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?$' | \
              head -n 1 | \
              sed 's|refs/tags/||')
 
 if [ -z "$LATEST_TAG" ]; then
-    echo -e "${RED}❌ 错误: 无法从 kernel.org 获取最新版本标签${NC}"
+    echo -e "${RED}❌ 错误: 无法从 Github 获取最新版本标签${NC}"
     exit 1
 fi
 
