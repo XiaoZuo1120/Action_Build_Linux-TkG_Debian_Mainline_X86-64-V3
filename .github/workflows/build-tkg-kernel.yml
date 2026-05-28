@@ -105,14 +105,14 @@ jobs:
           # 删除巨大的源码目录以节省空间和上传时间
           if [ -d "$TKG_DIR/linux-src-git" ]; then
             echo "🗑️ 删除源码目录..."
-            rm -rf $TKG_DIR/linux-src-git
+            sudo rm -rf $TKG_DIR/linux-src-git
           fi
 
           # 清理不必要的 deb 包
           if [ -d "$TKG_DIR/DEBS" ]; then
             echo "🗑️ 清理调试符号包..."
-            rm -f $TKG_DIR/DEBS/*dbg*.deb
-            rm -f $TKG_DIR/DEBS/*libc-dev*.deb
+            sudo rm -f $TKG_DIR/DEBS/*dbg*.deb
+            sudo rm -f $TKG_DIR/DEBS/*libc-dev*.deb
             echo "📦 剩余包列表:"
             ls -lh $TKG_DIR/DEBS/
           fi
