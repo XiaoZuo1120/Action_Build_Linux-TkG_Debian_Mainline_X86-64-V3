@@ -97,7 +97,7 @@ jobs:
           echo "----------------------"
 
           # 4. 开始编译
-          yes '' | ./install.sh install
+          yes '' | sudo ./install.sh install
 
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
