@@ -1,41 +1,57 @@
 name: 🐧 Build Linux-TkG Kernel (Debian/Sid)
+
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: 🔨 强制重新编译 (即使版本未变)
+        description: '🔨 强制重新编译 (即使版本未变)'
         required: false
-        default: "false"
+        default: 'false'
         type: boolean
   schedule:
-    - cron: 0 2 * * 2
+    - cron: '0 2 * * 2' # 每周二 UTC 02:00 (北京时间周二 10:00)
+
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
+
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
+      # --------------------------------------------------------------------------
+      # 阶段 1: 初始化与版本检测
+      # --------------------------------------------------------------------------
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: 🔍 Check Latest Kernel Version
         id: check_version
         run: |
+          echo "::group::🔍 Version Check"
           chmod +x check_version.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version.sh
+          echo "::endgroup::"
+
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ 内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
+
+      # --------------------------------------------------------------------------
+      # 阶段 2: 环境清理与依赖安装
+      # --------------------------------------------------------------------------
       - name: 🧹 Free Disk Space (Slimhub)
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
+
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
@@ -43,65 +59,41 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
+
       - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
+          echo "::group::📦 Installing Dependencies"
           sudo apt-get update
+          # 安装基础构建依赖，不指定特定版本的 clang/gcc，让系统默认值生效
           sudo apt-get install -y \
             git bc bison flex libssl-dev libelf-dev make gcc \
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
-            rsync zstd unzip curl
-      - name: ⚡ Install Latest LLVM Dynamically
-        if: env.SKIP_BUILD != 'true'
-        run: >
-          echo "🔍 正在查询 LLVM 最新稳定版本..."
+            rsync zstd unzip curl clang llvm lld
+          echo "::endgroup::"
 
-          LATEST_RELEASE_URL=$(curl -s -o /dev/null -w "%{url_effective}" https://github.com/llvm/llvm-project/releases/latest)
-
-
-          if [[ $LATEST_RELEASE_URL =~ llvmorg-([0-9]+)\.[0-9]+\.[0-9]+ ]]; then
-            LLVM_VER="${BASH_REMATCH[1]}"
-          else
-            LLVM_VER="22" # Fallback
-          fi
-
-
-          echo "✅ 将安装 LLVM-${LLVM_VER}"
-
-
-          # 使用官方脚本安装特定大版本
-
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${LLVM_VER}
-
-
-          # 设置环境变量供后续步骤使用
-
-          echo "LLVM_VER=${LLVM_VER}" >> $GITHUB_ENV
-
-          echo "CC=clang-${LLVM_VER}" >> $GITHUB_ENV
-
-          echo "CXX=clang++-${LLVM_VER}" >> $GITHUB_ENV
-
-          echo "LD=lld-${LLVM_VER}" >> $GITHUB_ENV
-
-          echo "AR=llvm-ar-${LLVM_VER}" >> $GITHUB_ENV
-
-          echo "NM=llvm-nm-${LLVM_VER}" >> $GITHUB_ENV
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
+
+      # --------------------------------------------------------------------------
+      # 阶段 3: 源码获取与配置
+      # --------------------------------------------------------------------------
       - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
+          echo "::group::📂 Cloning TKG"
           echo "📥 克隆 linux-tkg 仓库..."
-
           git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+          echo "::endgroup::"
+
       - name: 🤖 Auto-Configure BORE & Patches
         if: env.SKIP_BUILD != 'true'
         run: |
+          echo "::group::🤖 BORE Configuration"
           if [ -f "./auto_bore_setup.sh" ]; then
             echo "🚀 正在执行 BORE 自动适配..."
             chmod +x ./auto_bore_setup.sh
@@ -109,51 +101,59 @@ jobs:
           else
             echo "⚠️ 未找到 auto_bore_setup.sh，跳过 BORE 适配。"
           fi
+          echo "::endgroup::"
+
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
+          echo "::group::📝 Final Config Prep"
           cd $TKG_DIR
-
-
+          
           # 复制根目录已修改好的 cfg
-
           cp ../customization.cfg ./customization.cfg
-
-
+          
           # 【关键】从 cfg 中提取实际使用的调度器，用于 Release 显示
-
           ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-
           echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
-
-
+          
           echo "--- 📋 最终构建配置 ---"
-
           grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
-
           echo "----------------------"
-
           echo "✅ 检测到调度器: ${ACTUAL_SCHEDULER}"
+          echo "::endgroup::"
+
+      # --------------------------------------------------------------------------
+      # 阶段 4: 编译内核
+      # --------------------------------------------------------------------------
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
         run: |
+          echo "::group::🔨 Kernel Compilation (This may take a while)"
           cd $TKG_DIR
-
+          
           echo "🔨 开始编译内核..."
-          echo "   Compiler: ${CC}"
           echo "   Scheduler: ${CPU_SCHEDULER}"
-
-          # 使用 script 模拟终端以解决交互问题，并传递环境变量
+          echo "   Version: ${NEW_VERSION}"
+          echo "   Compiler: Using System Default (Auto-detected by TKG)"
+          
+          # 使用 script 模拟终端以解决交互问题
+          # TKG 脚本会自动检测并使用系统中可用的最佳编译器
           sudo script -qec './install.sh install' /dev/null
+          echo "::endgroup::"
+
+      # --------------------------------------------------------------------------
+      # 阶段 5: 清理、上传与发布
+      # --------------------------------------------------------------------------
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
+          echo "::group::🗑️ Cleanup"
           # 删除巨大的源码目录
           if [ -d "$TKG_DIR/linux-src-git" ]; then
             echo "🗑️ 删除源码目录..."
             sudo rm -rf $TKG_DIR/linux-src-git
           fi
-
+          
           # 清理不必要的 deb 包
           if [ -d "$TKG_DIR/DEBS" ]; then
             echo "🗑️ 清理调试符号包..."
@@ -162,6 +162,8 @@ jobs:
             echo "📦 剩余包列表:"
             ls -lh $TKG_DIR/DEBS/
           fi
+          echo "::endgroup::"
+
       - name: 📤 Upload Kernel Packages as Artifact
         if: env.SKIP_BUILD != 'true'
         uses: actions/upload-artifact@v4
@@ -171,6 +173,7 @@ jobs:
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
           retention-days: 7
+
       - name: 🏷️ Create GitHub Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
@@ -179,13 +182,13 @@ jobs:
           name: Linux-TkG ${{ env.NEW_VERSION }} (Built on ${{ env.BUILD_TIMESTAMP }})
           body: |
             Automated build of Linux-TkG kernel for Debian Sid.
-
+            
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
-            - Compiler: Clang/LLVM ${{ env.LLM_VER }}
+            - Compiler: System Default (Auto-detected)
             - LTO: Thin
             - Arch Optimization: x86-64-v3
-
+            
             **Changes:**
             - Updated to kernel version: ${{ env.NEW_VERSION }}
             - Build Timestamp: ${{ env.BUILD_TIMESTAMP }}
@@ -194,18 +197,18 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: >
+        run: |
+          echo "::group::💾 Git Commit"
           git config --local user.email "action@github.com"
-
           git config --local user.name "GitHub Action Bot"
-
           git add customization.cfg
-
           git commit -m "chore: update kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
-
           git push
+          echo "::endgroup::"
+
       - name: ❌ Notify Failure
         if: failure()
         run: |
