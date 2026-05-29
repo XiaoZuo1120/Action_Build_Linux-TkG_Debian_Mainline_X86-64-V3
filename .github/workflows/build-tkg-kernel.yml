@@ -22,6 +22,9 @@ jobs:
       contents: write
 
     steps:
+      # --------------------------------------------------------------------------
+      # 阶段 1: 准备环境与版本检测
+      # --------------------------------------------------------------------------
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -31,7 +34,6 @@ jobs:
         id: check_version
         run: |
           chmod +x check_version.sh
-          # 传递 FORCE_BUILD 环境变量给脚本
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version.sh
 
@@ -41,9 +43,10 @@ jobs:
           echo "✅ 内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
 
-      - name: 🧹 Free Disk Space
-        if: env.SKIP_BUILD != 'true'
-        uses: rokibhasansagar/slimhub_actions@main
+#      - name: 🧹 Free Disk Space (Slimhub)
+#        if: env.SKIP_BUILD != 'true'
+#        uses:
+#rokibhasansagar/slimhub_actions@main
 
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
@@ -53,31 +56,62 @@ jobs:
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
 
-      - name: 📦 Install Build Dependencies
+      # --------------------------------------------------------------------------
+      # 阶段 2: 安装依赖与动态 LLVM
+      # --------------------------------------------------------------------------
+      - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git bc bison flex libssl-dev libelf-dev make gcc clang lld llvm \
+            git bc bison flex libssl-dev libelf-dev make gcc \
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl
+
+      - name: ⚡ Install Latest LLVM Dynamically
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          echo "🔍 正在查询 LLVM 最新稳定版本..."
+          LATEST_RELEASE_URL=$(curl -s -o /dev/null -w "%{url_effective}" https://github.com/llvm/llvm-project/releases/latest)
+          
+          if [[ $LATEST_RELEASE_URL =~ llvmorg-([0-9]+)\.[0-9]+\.[0-9]+ ]]; then
+            LLVM_VER="${BASH_REMATCH[1]}"
+          else
+            LLVM_VER="22" # Fallback
+          fi
+          
+          echo "✅ 将安装 LLVM-${LLVM_VER}"
+          
+          # 使用官方脚本安装特定大版本
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${LLVM_VER}
+          
+          # 设置环境变量供后续步骤使用
+          echo "LLVM_VER=${LLVM_VER}" >> $GITHUB_ENV
+          echo "CC=clang-${LLVM_VER}" >> $GITHUB_ENV
+          echo "CXX=clang++-${LLVM_VER}" >> $GITHUB_ENV
+          echo "LD=lld-${LLVM_VER}" >> $GITHUB_ENV
+          echo "AR=llvm-ar-${LLVM_VER}" >> $GITHUB_ENV
+          echo "NM=llvm-nm-${LLVM_VER}" >> $GITHUB_ENV
 
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
+          git config --global advice.detachedHead false
 
-      - name: 🛠️ Clone Linux-TkG, Apply BORE & Build
+      # --------------------------------------------------------------------------
+      # 阶段 3: 获取源码与自动配置
+      # --------------------------------------------------------------------------
+      - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
         run: |
-          # 1. 克隆 TKG 仓库
           echo "📥 克隆 linux-tkg 仓库..."
           git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
 
-          # 2. 【关键】在 Clone 之后，运行 BORE 适配脚本
-          # 此时 ./linux-tkg 目录已存在，脚本可以安全地将补丁写入 ./linux-tkg/linux-tkg-patches/
-          # 并且脚本会修改【当前根目录】的 customization.cfg
+      - name: 🤖 Auto-Configure BORE & Patches
+        if: env.SKIP_BUILD != 'true'
+        run: |
           if [ -f "./auto_bore_setup.sh" ]; then
             echo "🚀 正在执行 BORE 自动适配..."
             chmod +x ./auto_bore_setup.sh
@@ -86,28 +120,50 @@ jobs:
             echo "⚠️ 未找到 auto_bore_setup.sh，跳过 BORE 适配。"
           fi
 
+      - name: 📝 Prepare Final Configuration
+        if: env.SKIP_BUILD != 'true'
+        run: |
           cd $TKG_DIR
-
-          # 3. 将【已修改好】的根目录 cfg 复制进 TKG 目录
-          # 此时 cfg 里的 _cpusched 已经是 bore 或 eevdf 了
+          
+          # 复制根目录已修改好的 cfg
           cp ../customization.cfg ./customization.cfg
-
+          
+          # 【关键】从 cfg 中提取实际使用的调度器，用于 Release 显示
+          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
+          
           echo "--- 📋 最终构建配置 ---"
-          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" customization.cfg
+          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
           echo "----------------------"
+          echo "✅ 检测到调度器: ${ACTUAL_SCHEDULER}"
 
-          # 4. 开始编译
-          yes '' | sudo ./install.sh install
+      # --------------------------------------------------------------------------
+      # 阶段 4: 编译内核
+      # --------------------------------------------------------------------------
+      - name: 🔨 Compile Kernel
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          cd $TKG_DIR
+          
+          echo "🔨 开始编译内核..."
+          echo "   Compiler: ${CC}"
+          echo "   Scheduler: ${CPU_SCHEDULER}"
+          
+          # 使用 script 模拟终端以解决交互问题，并传递环境变量
+          sudo script -qec './install.sh install' /dev/null
 
+      # --------------------------------------------------------------------------
+      # 阶段 5: 清理与发布
+      # --------------------------------------------------------------------------
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
-          # 删除巨大的源码目录以节省空间和上传时间
+          # 删除巨大的源码目录
           if [ -d "$TKG_DIR/linux-src-git" ]; then
             echo "🗑️ 删除源码目录..."
             sudo rm -rf $TKG_DIR/linux-src-git
           fi
-
+          
           # 清理不必要的 deb 包
           if [ -d "$TKG_DIR/DEBS" ]; then
             echo "🗑️ 清理调试符号包..."
@@ -135,13 +191,13 @@ jobs:
           name: Linux-TkG ${{ env.NEW_VERSION }} (Built on ${{ env.BUILD_TIMESTAMP }})
           body: |
             Automated build of Linux-TkG kernel for Debian Sid.
-
+            
             **Configuration:**
-            - Scheduler: ${{ env.CPU_SCHEDULER || 'Auto-Detected' }}
-            - Compiler: Clang (LLVM)
+            - Scheduler: **${{ env.CPU_SCHEDULER }}**
+            - Compiler: Clang/LLVM ${{ env.LLM_VER }}
             - LTO: Thin
             - Arch Optimization: x86-64-v3
-
+            
             **Changes:**
             - Updated to kernel version: ${{ env.NEW_VERSION }}
             - Build Timestamp: ${{ env.BUILD_TIMESTAMP }}
