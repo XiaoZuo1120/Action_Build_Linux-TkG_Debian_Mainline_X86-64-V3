@@ -43,10 +43,10 @@ jobs:
           echo "✅ 内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
 
-#      - name: 🧹 Free Disk Space (Slimhub)
-#        if: env.SKIP_BUILD != 'true'
-#        uses:
-#rokibhasansagar/slimhub_actions@main
+      - name: 🧹 Free Disk Space (Slimhub)
+        if: env.SKIP_BUILD != 'true'
+        uses:
+rokibhasansagar/slimhub_actions@main
 
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
