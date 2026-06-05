@@ -38,12 +38,10 @@ jobs:
         if: env.SKIP_BUILD == 'true'
         run: echo "✅ GCC 稳定版已是最新，跳过。" && exit 0
 
-      - name: 🧹 Free Disk Space
-        if: env.SKIP_BUILD != 'true'
-        uses: rokibhasansagar/slimhub_actions@main
-        with:
-          # 保留 GCC 基础环境和 Git，其他全部清理以节省空间
-          retain: "compiler_gcc, vcs"
+#      - name: 🧹 Free Disk Space
+#        if: env.SKIP_BUILD != 'true'
+#        uses: rokibhasansagar/slimhub_actions@main
+
 
       - name: 📅 Generate Timestamp
         if: env.SKIP_BUILD != 'true'
