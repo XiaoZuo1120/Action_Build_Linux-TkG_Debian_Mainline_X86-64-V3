@@ -7,7 +7,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${YELLOW}=== 🕵️ 检查最新内核版本 (Kernel.org) ===${NC}"
+echo -e "${YELLOW}=== 🕵️ 检查最新主线内核版本 (gregkh/linux) ===${NC}"
 
 CFG_FILE="customization.cfg"
 if [ ! -f "$CFG_FILE" ]; then
@@ -19,25 +19,29 @@ fi
 CURRENT_VER=$(grep '^_version=' "$CFG_FILE" | head -n 1 | sed 's/_version=//; s/"//g; s/^ *//; s/ *$//')
 echo "📄 本地配置文件版本: ${CURRENT_VER:-<空>}"
 
-# 2. 从 Github 获取最新的 Tag
-echo "🌐 正在查询 Github 最新标签..."
+# 2. 从 Greg KH 仓库获取最新的 Tag (包含 RC 和所有稳定版)
+echo "🌐 正在查询 gregkh/linux 最新标签..."
 
-# 获取主线最新 tag (包含 rc)
-# 注意：这里我们不再去掉 'v'，因为 linux-tkg 需要完整的 tag 名
+# 【关键】
+# 1. --sort="-v:refname": 按版本逻辑倒序排列，确保最新的在最上面
+# 2. grep -oP: 提取符合标准内核版本格式的标签
+#    - v[0-9]+\.[0-9]+ : 主版本.次版本 (如 v7.1, v7.0)
+#    - (-rc[0-9]+)?    : 可选的 RC 后缀 (如 -rc6)
+#    - (\.[0-9]+)?     : 可选的小版本后缀 (如 .11, .175)
+# 3. head -n 1: 取排序后的第一个（即最新版）
 LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/gregkh/linux.git | \
-             grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?$' | \
+             grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?(\.[0-9]+)?$' | \
              head -n 1 | \
              sed 's|refs/tags/||')
 
 if [ -z "$LATEST_TAG" ]; then
-    echo -e "${RED}❌ 错误: 无法从 Github 获取最新版本标签${NC}"
+    echo -e "${RED}❌ 错误: 无法从 gregkh/linux 获取最新版本标签${NC}"
     exit 1
 fi
 
-# 【关键修改】保留 'v' 前缀
 TARGET_VERSION="${LATEST_TAG}"
 
-echo -e "${GREEN}✅ 检测到最新内核版本: ${TARGET_VERSION}${NC}"
+echo -e "${GREEN}✅ 检测到最新主线内核版本: ${TARGET_VERSION}${NC}"
 
 # 3. 比较版本
 FORCE_BUILD="${FORCE_BUILD:-false}"
