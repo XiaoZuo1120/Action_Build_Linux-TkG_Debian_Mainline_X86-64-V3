@@ -2,7 +2,6 @@
 
 # ==============================================================================
 # 自动 BORE 调度器适配脚本 (最终修正版)
-# 注意：此脚本修改的是【当前工作目录】下的 customization.cfg
 # ==============================================================================
 
 set -e
@@ -13,7 +12,8 @@ TEMP_DIR="./bore_temp"
 
 # 【重要】根据用户要求，目录名绝对正确，不可修改
 TKG_PATCH_DIR="./linux-tkg/linux-tkg-patches"
-CFG_FILE="./customization.cfg"
+# 允许通过环境变量覆盖 CFG 文件路径
+CFG_FILE="${CFG_FILE:-./customization.cfg}"
 
 # --- 1. 获取并清洗内核版本 ---
 if [ ! -f "$CFG_FILE" ]; then
@@ -109,12 +109,12 @@ if [ -n "$PATCH_FILE" ]; then
 
     # 【关键】更新【当前目录】的 CFG
     sed -i 's|^_cpusched=.*|_cpusched="bore"|' "$CFG_FILE"
-    echo "⚙️ 已更新 $(pwd)/customization.cfg: _cpusched=\"bore\""
+    echo "⚙️ 已更新customization: _cpusched=\"bore\""
 else
     echo "⚠️ 未找到适用于内核 $KERNEL_MAJOR_MINOR 的 BORE 补丁。"
     echo "💡 回退到默认调度器: eevdf"
     sed -i 's|^_cpusched=.*|_cpusched="eevdf"|' "$CFG_FILE"
-    echo "⚙️ 已更新 $(pwd)/customization.cfg: _cpusched=\"eevdf\""
+    echo "⚙️ 已更新customization: _cpusched=\"eevdf\""
 fi
 
 # --- 5. 清理 ---
