@@ -19,15 +19,16 @@ fi
 CURRENT_VER=$(grep '^_version=' "$CFG_FILE" | head -n 1 | sed 's/_version=//; s/"//g; s/^ *//; s/ *$//')
 echo "📄 本地配置文件版本: ${CURRENT_VER:-<空>}"
 
-# 2. 从 Greg KH 仓库获取最新的 Tag (包含 RC 和所有稳定版)
+# 2. 从 Greg KH 仓库获取最新的 Tag (包含 RC)
 echo "🌐 正在查询 gregkh/linux 最新标签..."
 
 # 【关键】
 # 1. --sort="-v:refname": 按版本逻辑倒序排列，确保最新的在最上面
 # 2. grep -oP: 提取符合标准内核版本格式的标签
-#    - v[0-9]+\.[0-9]+ : 主版本.次版本 (如 v7.1, v7.0)
-#    - (-rc[0-9]+)?    : 可选的 RC 后缀 (如 -rc6)
-#    - (\.[0-9]+)?     : 可选的小版本后缀 (如 .11, .175)
+#    - v[0-9]+\.[0-9]+       : 主版本.次版本 (如 v7.1, v7.0, v6.12)
+#    - (-rc[0-9]+)?          : 可选的 RC 后缀 (如 -rc6)
+#    - (\.[0-9]+)?           : 可选的小版本后缀 (如 .11, .175, .209)
+#    - $                     : 确保行尾结束，排除其他杂乱标签
 # 3. head -n 1: 取排序后的第一个（即最新版）
 LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/gregkh/linux.git | \
              grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?(\.[0-9]+)?$' | \
