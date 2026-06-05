@@ -1,56 +1,42 @@
+---
 name: 🐧 Build Linux-TkG Kernel (Latest LLVM)
-
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: '🔨 强制重新编译 (即使版本未变)'
+        description: 🔨 强制重新编译 (即使版本未变)
         required: false
-        default: 'false'
+        default: "false"
         type: boolean
   schedule:
-    - cron: '0 6 * * 2' # 错开时间，比如周二 UTC 06:00
-
+    - cron: 0 12 8,22 * *
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
-
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      # --------------------------------------------------------------------------
-      # 阶段 1: 初始化与版本检测
-      # --------------------------------------------------------------------------
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: 🔍 Check Latest Kernel Version (LLVM)
         id: check_version
         run: |
           chmod +x check_version-llvm.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-llvm.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ LLVM 版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
-
-      # --------------------------------------------------------------------------
-      # 阶段 2: 环境清理与依赖安装
-      # --------------------------------------------------------------------------
       - name: 🧹 Free Disk Space (Slimhub)
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
-
-
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
@@ -58,7 +44,6 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
-
       - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -70,57 +55,71 @@ jobs:
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl
           echo "::endgroup::"
-
       - name: ⚡ Install & Configure Latest LLVM
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::⚡ Installing Latest LLVM"
-          
+
+
           # 1. 获取最新 LLVM 大版本号
+
           LATEST_RELEASE_URL=$(curl -s -o /dev/null -w "%{url_effective}" https://github.com/llvm/llvm-project/releases/latest)
+
           if [[ $LATEST_RELEASE_URL =~ llvmorg-([0-9]+)\.[0-9]+\.[0-9]+ ]]; then
             LLVM_VER="${BASH_REMATCH[1]}"
           else
             LLVM_VER="22" # Fallback
           fi
+
           echo "✅ Detected LLVM Version: ${LLVM_VER}"
 
-          # 2. 使用官方脚本安装
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${LLVM_VER}
-          
-          # 3. 设置环境变量，强制 TKG 使用此版本
-          LLVM_PATH="/usr/lib/llvm-${LLVM_VER}/bin"
-          echo "LLVM_VER=${LLVM_VER}" >> $GITHUB_ENV
-          echo "CUSTOM_LLVM_PATH=${LLVM_PATH}" >> $GITHUB_ENV
-          
-          # 同时也设置标准的 CC/LD，以防 TKG 某些地方没用到 CUSTOM_LLVM_PATH
-          echo "CC=clang-${LLVM_VER}" >> $GITHUB_ENV
-          echo "CXX=clang++-${LLVM_VER}" >> $GITHUB_ENV
-          echo "LD=lld-${LLVM_VER}" >> $GITHUB_ENV
-          echo "AR=llvm-ar-${LLVM_VER}" >> $GITHUB_ENV
-          echo "NM=llvm-nm-${LLVM_VER}" >> $GITHUB_ENV
-          echo "OBJCOPY=llvm-objcopy-${LLVM_VER}" >> $GITHUB_ENV
-          echo "STRIP=llvm-strip-${LLVM_VER}" >> $GITHUB_ENV
-          
-          echo "::endgroup::"
 
+          # 2. 使用官方脚本安装
+
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${LLVM_VER}
+
+
+          # 3. 设置环境变量，强制 TKG 使用此版本
+
+          LLVM_PATH="/usr/lib/llvm-${LLVM_VER}/bin"
+
+          echo "LLVM_VER=${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "CUSTOM_LLVM_PATH=${LLVM_PATH}" >> $GITHUB_ENV
+
+
+          # 同时也设置标准的 CC/LD，以防 TKG 某些地方没用到 CUSTOM_LLVM_PATH
+
+          echo "CC=clang-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "CXX=clang++-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "LD=lld-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "AR=llvm-ar-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "NM=llvm-nm-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "OBJCOPY=llvm-objcopy-${LLVM_VER}" >> $GITHUB_ENV
+
+          echo "STRIP=llvm-strip-${LLVM_VER}" >> $GITHUB_ENV
+
+
+          echo "::endgroup::"
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
-
-      # --------------------------------------------------------------------------
-      # 阶段 3: 源码获取与配置
-      # --------------------------------------------------------------------------
       - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📂 Cloning TKG"
-          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          echo "::endgroup::"
 
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+
+          echo "::endgroup::"
       - name: 🤖 Auto-Configure BORE & Patches
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -132,46 +131,46 @@ jobs:
             ./auto_bore_setup.sh
           fi
           echo "::endgroup::"
-
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📝 Final Config Prep"
-          cd $TKG_DIR
-          
-          # 复制 LLVM 版 cfg
-          cp ../customization-llvm.cfg ./customization.cfg
-          
-          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
-          
-          echo "--- 📋 最终构建配置 ---"
-          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
-          echo "----------------------"
-          echo "::endgroup::"
 
-      # --------------------------------------------------------------------------
-      # 阶段 4: 编译内核
-      # --------------------------------------------------------------------------
+          cd $TKG_DIR
+
+
+          # 复制 LLVM 版 cfg
+
+          cp ../customization-llvm.cfg ./customization.cfg
+
+
+          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+
+          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
+
+
+          echo "--- 📋 最终构建配置 ---"
+
+          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
+
+          echo "----------------------"
+
+          echo "::endgroup::"
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
-          
+
           echo "🔨 开始编译内核 (Latest LLVM)..."
           echo "   Compiler: Clang/LLVM ${LLVM_VER}"
           echo "   Path: ${CUSTOM_LLVM_PATH}"
           echo "   Scheduler: ${CPU_SCHEDULER}"
           echo "   Version: ${NEW_VERSION}"
-          
+
           # TKG 会自动读取 CUSTOM_LLVM_PATH 环境变量
           sudo script -qec './install.sh install' /dev/null
           echo "::endgroup::"
-
-      # --------------------------------------------------------------------------
-      # 阶段 5: 清理、上传与发布
-      # --------------------------------------------------------------------------
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
@@ -184,17 +183,6 @@ jobs:
             sudo rm -f $TKG_DIR/DEBS/*libc-dev*.deb
           fi
           echo "::endgroup::"
-
-      - name: 📤 Upload Kernel Packages as Artifact
-        if: env.SKIP_BUILD != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-tkg-llvm-debs-${{ env.NEW_VERSION || 'latest' }}
-          path: |
-            ${{ env.TKG_DIR }}/DEBS/*.deb
-            ${{ env.TKG_DIR }}/kernelconfig.new
-          retention-days: 7
-
       - name: 🏷️ Create GitHub Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
@@ -203,7 +191,7 @@ jobs:
           name: Linux-TkG LLVM ${{ env.NEW_VERSION }}
           body: |
             Automated build of Linux-TkG kernel with **Latest LLVM/Clang**.
-            
+
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
             - Compiler: Clang/LLVM ${{ env.LLM_VER }}
@@ -214,12 +202,15 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: |
+        run: >
           git config --local user.email "action@github.com"
+
           git config --local user.name "GitHub Action Bot"
+
           git add customization-llvm.cfg
+
           git commit -m "chore: update llvm kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+
           git push

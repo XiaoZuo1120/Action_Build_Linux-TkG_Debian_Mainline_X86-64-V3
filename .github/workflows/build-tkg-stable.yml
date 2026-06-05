@@ -1,51 +1,43 @@
+---
 name: 🐧 Build Linux-TkG Stable Kernel (Debian/Sid)
-
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: '🔨 强制重新编译 (即使版本未变)'
+        description: 🔨 强制重新编译 (即使版本未变)
         required: false
-        default: 'false'
+        default: "false"
         type: boolean
   schedule:
-    - cron: '0 4 * * 2' # 错开时间，比如周二 UTC 04:00
-
+    - cron: 0 12 1,15 * *
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
-  CFG_FILE: customization-stable.cfg # 【新增】定义使用的 cfg 文件
-
+  CFG_FILE: customization-stable.cfg
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: 🔍 Check Latest Stable Kernel Version
         id: check_version
         run: |
           chmod +x check_version-stable.sh # 【修改】指向稳定版脚本
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-stable.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
-
       - name: 🧹 Free Disk Space (Slimhub)
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
-
-
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
@@ -53,7 +45,6 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
-
       - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -64,21 +55,20 @@ jobs:
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl clang llvm lld
           echo "::endgroup::"
-
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
-
       - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📂 Cloning TKG"
-          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          echo "::endgroup::"
 
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+
+          echo "::endgroup::"
       - name: 🤖 Auto-Configure BORE & Patches
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -88,7 +78,7 @@ jobs:
           # 这里假设你修改了 auto_bore_setup.sh 以支持环境变量 CFG_FILE
           # 如果没有修改，请取消下面这行的注释，手动复制内容到标准 cfg 供脚本使用
           # cp customization-stable.cfg customization.cfg 
-          
+
           if [ -f "./auto_bore_setup.sh" ]; then
             echo "🚀 正在执行 BORE 自动适配..."
             chmod +x ./auto_bore_setup.sh
@@ -99,24 +89,31 @@ jobs:
             echo "⚠️ 未找到 auto_bore_setup.sh，跳过 BORE 适配。"
           fi
           echo "::endgroup::"
-
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📝 Final Config Prep"
-          cd $TKG_DIR
-          
-          # 复制稳定版 cfg
-          cp ../customization-stable.cfg ./customization.cfg
-          
-          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
-          
-          echo "--- 📋 最终构建配置 ---"
-          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
-          echo "----------------------"
-          echo "::endgroup::"
 
+          cd $TKG_DIR
+
+
+          # 复制稳定版 cfg
+
+          cp ../customization-stable.cfg ./customization.cfg
+
+
+          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+
+          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
+
+
+          echo "--- 📋 最终构建配置 ---"
+
+          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
+
+          echo "----------------------"
+
+          echo "::endgroup::"
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -127,7 +124,6 @@ jobs:
           echo "   Version: ${NEW_VERSION}"
           sudo script -qec './install.sh install' /dev/null
           echo "::endgroup::"
-
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
@@ -140,26 +136,15 @@ jobs:
             sudo rm -f $TKG_DIR/DEBS/*libc-dev*.deb
           fi
           echo "::endgroup::"
-
-      - name: 📤 Upload Kernel Packages as Artifact
-        if: env.SKIP_BUILD != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-tkg-stable-debs-${{ env.NEW_VERSION || 'latest' }}
-          path: |
-            ${{ env.TKG_DIR }}/DEBS/*.deb
-            ${{ env.TKG_DIR }}/kernelconfig.new
-          retention-days: 7
-
       - name: 🏷️ Create GitHub Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: stable-v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }} # 【修改】Tag 加前缀区分
+          tag_name: stable-v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
           name: Linux-TkG Stable ${{ env.NEW_VERSION }}
           body: |
             Automated build of **Stable** Linux-TkG kernel for Debian Sid.
-            
+
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
             - Compiler: System Default
@@ -170,12 +155,15 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: |
+        run: >
           git config --local user.email "action@github.com"
+
           git config --local user.name "GitHub Action Bot"
+
           git add customization-stable.cfg # 【修改】提交稳定版 cfg
+
           git commit -m "chore: update stable kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+
           git push

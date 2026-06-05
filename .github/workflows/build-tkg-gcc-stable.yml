@@ -9,7 +9,7 @@ on:
         default: "false"
         type: boolean
   schedule:
-    - cron: 0 10 * * 2
+    - cron: 0 10 1,15 * *
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
@@ -176,15 +176,6 @@ jobs:
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
-      - name: 📤 Upload Artifact
-        if: env.SKIP_BUILD != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-tkg-gcc-stable-debs-${{ env.NEW_VERSION }}
-          path: |
-            ${{ env.TKG_DIR }}/DEBS/*.deb
-            ${{ env.TKG_DIR }}/kernelconfig.new
-          retention-days: 7
       - name: 🏷️ Create Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
