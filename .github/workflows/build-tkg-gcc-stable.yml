@@ -1,53 +1,44 @@
+---
 name: 🐧 Build Linux-TkG Kernel (GCC Stable)
-
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: '🔨 强制重新编译'
+        description: 🔨 强制重新编译
         required: false
-        default: 'false'
+        default: "false"
         type: boolean
   schedule:
-    - cron: '0 10 * * 2' # 周二 UTC 10:00
-
+    - cron: 0 10 * * 2
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
-
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: 🔍 Check Latest Stable Version
         id: check_version
         run: |
           chmod +x check_version-gcc-stable.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-gcc-stable.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: echo "✅ GCC 稳定版已是最新，跳过。" && exit 0
-
-#      - name: 🧹 Free Disk Space
-#        if: env.SKIP_BUILD != 'true'
-#        uses: rokibhasansagar/slimhub_actions@main
-
-
+      - name: 🧹 Free Disk Space
+        if: env.SKIP_BUILD != 'true'
+        uses: rokibhasansagar/slimhub_actions@main
       - name: 📅 Generate Timestamp
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
       - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -56,65 +47,59 @@ jobs:
             git bc bison flex libssl-dev libelf-dev make \
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl software-properties-common
-
       - name: ⚡ Install Latest GCC Dynamically
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::⚡ Installing Latest GCC"
+
           # 1. 获取最新 GCC 大版本
+
           LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
                            grep -oP 'releases/gcc-\K[0-9]+(?=\.[0-9]+\.[0-9]+)' | \
                            head -n 1)
-          
-          # 如果获取失败，回退到 14
-          if [ -z "$LATEST_GCC_VER" ]; then
-            echo "⚠️ Failed to detect latest GCC, defaulting to 14."
-            LATEST_GCC_VER="14"
-          fi
-          
-          echo "✅ Detected GCC Major Version: ${LATEST_GCC_VER}"
+          [ -z "$LATEST_GCC_VER" ] && LATEST_GCC_VER="14"
+
+          echo "✅ Detected GCC Version: ${LATEST_GCC_VER}"
+
           echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
 
+
           # 2. 添加 PPA 并安装
+
           sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+
           sudo apt-get update
-          
-          # 尝试安装，如果失败则递减版本尝试 (最多尝试到 14)
-          INSTALLED=false
+
+
+          # 尝试安装
+
           for ver in $LATEST_GCC_VER $((LATEST_GCC_VER-1)) 14; do
-            echo "Trying to install gcc-$ver..."
             if sudo apt-get install -y gcc-$ver g++-$ver; then
               echo "✅ Successfully installed GCC-$ver"
-              # 设置环境变量，强制 TKG 使用此版本
+              # 【关键】设置环境变量，强制 make 使用此版本
               echo "CC=gcc-$ver" >> $GITHUB_ENV
               echo "CXX=g++-$ver" >> $GITHUB_ENV
-              INSTALLED=true
+              # 同时也设置 CUSTOM_GCC_PATH，确保 TKG 脚本能找到它们
+              echo "CUSTOM_GCC_PATH=/usr/bin" >> $GITHUB_ENV
               break
-            else
-              echo "❌ Failed to install gcc-$ver, trying older version..."
             fi
           done
 
-          if [ "$INSTALLED" = false ]; then
-            echo "❌ Error: Could not install any recent GCC version."
-            exit 1
-          fi
           echo "::endgroup::"
-
       - name: ⚙️ Optimize Git
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
-
       - name: 📂 Clone Linux-TkG
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📂 Cloning TKG"
-          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          echo "::endgroup::"
 
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+
+          echo "::endgroup::"
       - name: 🤖 Auto-Configure BORE
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -128,43 +113,50 @@ jobs:
             echo "⚠️ auto_bore_setup.sh not found, skipping."
           fi
           echo "::endgroup::"
-
       - name: 📝 Prepare Config
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📝 Final Config Prep"
-          cd $TKG_DIR
-          
-          # 复制已修改好的配置文件
-          cp ../customization-gcc-stable.cfg ./customization.cfg
-          
-          # 提取最终使用的调度器
-          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
-          
-          echo "--- 📋 Final Configuration ---"
-          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
-          echo "-------------------------------"
-          echo "::endgroup::"
 
+          cd $TKG_DIR
+
+
+          # 复制已修改好的配置文件
+
+          cp ../customization-gcc-stable.cfg ./customization.cfg
+
+
+          # 提取最终使用的调度器
+
+          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+
+          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
+
+
+          echo "--- 📋 Final Configuration ---"
+
+          grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
+
+          echo "-------------------------------"
+
+          echo "::endgroup::"
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
-          
+
           echo "🚀 Starting Compilation..."
           echo "   Compiler: ${CC} (GCC ${GCC_VER})"
           echo "   Scheduler: ${CPU_SCHEDULER}"
           echo "   Version: ${NEW_VERSION}"
           echo "   Localversion: -tkg-gcc-stable"
-          
+
           # 使用 script 模拟终端，解决交互式问题
           # TKG 会自动识别 CC/CXX 环境变量
           sudo script -qec './install.sh install' /dev/null
-          
-          echo "::endgroup::"
 
+          echo "::endgroup::"
       - name: 🗑️ Cleanup
         if: always()
         run: |
@@ -174,7 +166,7 @@ jobs:
             echo "Removing linux-src-git..."
             sudo rm -rf $TKG_DIR/linux-src-git
           fi
-          
+
           # 清理不必要的 deb 包
           if [ -d "$TKG_DIR/DEBS" ]; then
             echo "Removing debug and libc-dev packages..."
@@ -184,7 +176,6 @@ jobs:
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
-
       - name: 📤 Upload Artifact
         if: env.SKIP_BUILD != 'true'
         uses: actions/upload-artifact@v4
@@ -194,39 +185,52 @@ jobs:
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
           retention-days: 7
-
       - name: 🏷️ Create Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: gcc-stable-v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
           name: Linux-TkG GCC Stable ${{ env.NEW_VERSION }}
-          body: |
+          body: >
             Automated build of Linux-TkG kernel with **Latest GCC**.
-            
+
+
             **Configuration:**
+
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
+
             - Compiler: **GCC ${{ env.GCC_VER }}**
+
             - LTO: None
+
             - Arch Optimization: x86-64-v3
+
             - Kernel Version: ${{ env.NEW_VERSION }}
-            
+
+
             **Notes:**
+
             - This build is optimized for stability and driver compatibility (NVIDIA/VirtualBox).
+
             - Built on GitHub Actions Ubuntu Runner.
           files: |
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 💾 Commit Config
         if: env.VERSION_CHANGED == 'true'
-        run: |
+        run: >
           echo "::group::💾 Git Commit"
+
           git config --local user.email "action@github.com"
+
           git config --local user.name "GitHub Action Bot"
+
           git add customization-gcc-stable.cfg
+
           git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+
           git push
+
           echo "::endgroup::"
