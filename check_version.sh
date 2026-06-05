@@ -24,7 +24,7 @@ echo "🌐 正在查询 Github 最新标签..."
 
 # 获取主线最新 tag (包含 rc)
 # 注意：这里我们不再去掉 'v'，因为 linux-tkg 需要完整的 tag 名
-LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/torvalds/linux.git | \
+LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/gregkh/linux.git | \
              grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-rc[0-9]+)?$' | \
              head -n 1 | \
              sed 's|refs/tags/||')

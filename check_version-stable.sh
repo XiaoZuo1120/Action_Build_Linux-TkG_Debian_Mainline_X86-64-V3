@@ -24,7 +24,7 @@ echo "🌐 正在查询 Github 最新稳定标签..."
 
 # 【关键修改】 grep -v '\-rc' 用于排除所有 Release Candidate 版本
 # sort -V 进行版本排序，确保拿到的是真正的最新版
-LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/torvalds/linux.git | \
+LATEST_TAG=$(git ls-remote --tags --sort="-v:refname" https://github.com/gregkh/linux.git | \
              grep -oP 'refs/tags/v[0-9]+\.[0-9]+(-[0-9]+)?$' | \
              grep -v '\-rc' | \
              head -n 1 | \
