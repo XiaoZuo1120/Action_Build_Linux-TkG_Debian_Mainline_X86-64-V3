@@ -46,9 +46,9 @@ jobs:
       # --------------------------------------------------------------------------
       # 阶段 2: 环境清理与依赖安装
       # --------------------------------------------------------------------------
-#      - name: 🧹 Free Disk Space (Slimhub)
-#        if: env.SKIP_BUILD != 'true'
-#        uses: rokibhasansagar/slimhub_actions@main
+      - name: 🧹 Free Disk Space (Slimhub)
+        if: env.SKIP_BUILD != 'true'
+        uses: rokibhasansagar/slimhub_actions@main
 
 
       - name: 📅 Generate Build Timestamp
