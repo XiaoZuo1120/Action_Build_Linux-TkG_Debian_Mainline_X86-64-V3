@@ -160,8 +160,13 @@ jobs:
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
           
-          # 【关键】直接删除 TKG 脚本中的依赖安装行，防止它再次尝试 apt install
-          sed -i '/^sudo apt install/d' install.sh
+          # 【关键修复】删除所有包含 "sudo apt install" 的行，无论是否有缩进
+          # 使用 /pattern/d 语法，只要行内包含该字符串就删除整行
+          sed -i '/sudo apt install/d' install.sh
+          
+          # 验证一下是否删除成功 (可选，用于调试)
+          echo "🔍 Checking if apt install line is removed:"
+          grep -n "apt install" install.sh || echo "✅ Successfully removed all apt install lines."
           
           # 【关键】导出 CC/CXX 变量，确保 make 使用正确的编译器
           export CC=gcc-${GCC_VER}
@@ -176,7 +181,6 @@ jobs:
           sudo -E script -qec './install.sh install' /dev/null
           
           echo "::endgroup::"
-
       - name: 🗑️ Cleanup
         if: always()
         run: |
