@@ -47,47 +47,53 @@ jobs:
         run: |
           echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: ⚡ Install GCC from Debian Sid (Wild Mode - Diversion Fix)
+      - name: ⚡ Install GCC from Debian Sid (Ultimate Wild Mode)
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::⚡ Installing GCC from Debian Sid"
           
-          # 1. 【关键修复】移除 Ubuntu 的 usrmerge 重定向，防止与 Debian Sid 冲突
+          # 1. 【关键修复 A】移除 Ubuntu 的 usrmerge 重定向，防止与 Debian Sid 冲突
           # 参考: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1074269
           echo "🔧 Removing Ubuntu usrmerge diversions..."
           for d in bin lib lib32 lib64 libo32 libx32 sbin; do 
             sudo dpkg-divert --package base-files --no-rename --remove /$d || true
           done
           
-          # 2. 添加 Debian Sid 源
+          # 2. 【关键修复 B】创建缺失的目录，绕过 base-files 的悬挂链接检查
+          echo "📂 Creating missing directories to bypass dangling link check..."
+          sudo mkdir -p /usr/lib32
+          sudo mkdir -p /usr/libx32
+          
+          # 3. 添加 Debian Sid 源
           echo "deb [trusted=yes] http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
           
-          # 3. 更新源
+          # 4. 更新源
           sudo apt-get update
           
-          # 4. 动态获取最新 GCC 大版本
+          # 5. 动态获取最新 GCC 大版本
           LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
                            grep -oP 'releases/gcc-\K[0-9]+(?=\.[0-9]+\.[0-9]+)' | \
                            head -n 1)
           
           if [ -z "$LATEST_GCC_VER" ]; then
             LATEST_GCC_VER="16"
+            echo "❌FAILSAFE!!!"
           fi
           
           echo "✅ Target GCC Version: ${LATEST_GCC_VER}"
           echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
           
-          # 5. 安装 GCC 及其依赖
-          # 由于移除了冲突的重定向，base-files 现在可以顺利升级或安装了
+          # 6. 安装 GCC 及其依赖
+          # 现在 base-files 应该能顺利安装了
           sudo apt-get install -y gcc-${LATEST_GCC_VER} g++-${LATEST_GCC_VER} cpp-${LATEST_GCC_VER} binutils
           
-          # 6. 切换默认编译器
+          # 7. 切换默认编译器
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100
           sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER}
           sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER}
           
-          # 7. 验证
+          # 8. 验证
           echo "🔍 Compiler & Binutils Verification:"
           gcc --version | head -n 1
           as --version | head -n 1
