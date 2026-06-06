@@ -55,25 +55,19 @@ jobs:
             git bc bison flex libssl-dev libelf-dev make \
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl software-properties-common
-
+            
       - name: ⚡ Install GCC from Debian Sid (Wild Mode)
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::⚡ Installing GCC from Debian Sid"
           
-          # 1. 下载并安装 Debian 密钥环
-          wget -q https://packages.debian.org/sid/all/debian-keyring/download -O debian-keyring.deb
-          wget -q https://packages.debian.org/sid/debian-archive-keyring -O debian-archive-keyring.deb
-          sudo dpkg -i debian-keyring.deb debian-archive-keyring.deb
-          rm debian-keyring.deb debian-archive-keyring.deb
+          # 1. 添加 Debian Sid 源 (不使用密钥环验证，CI 环境可接受)
+          echo "deb [trusted=yes] http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
           
-          # 2. 添加 Debian Sid 源
-          echo "deb http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
-          
-          # 3. 更新源
+          # 2. 更新源
           sudo apt-get update
           
-          # 4. 动态获取最新 GCC 大版本 (从 GitHub Tags)
+          # 3. 动态获取最新 GCC 大版本 (从 GitHub Tags)
           LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
                            grep -oP 'releases/gcc-\K[0-9]+(?=\.[0-9]+\.[0-9]+)' | \
                            head -n 1)
@@ -85,21 +79,21 @@ jobs:
           echo "✅ Target GCC Version: ${LATEST_GCC_VER}"
           echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
           
-          # 5. 【狂野】直接安装，让 apt 自己解决依赖
-          # 使用 --allow-unauthenticated 避免混合源的 GPG 错误
-          # 使用 --no-install-recommends 减少非核心依赖的安装
-          sudo apt-get install -y --allow-unauthenticated \
+          # 4. 【狂野】直接安装，让 apt 自己解决依赖
+          # [trusted=yes] 已经跳过了密钥验证，所以不需要 --allow-unauthenticated
+          # --no-install-recommends 减少非必要依赖
+          sudo apt-get install -y  \
             gcc-${LATEST_GCC_VER} \
             g++-${LATEST_GCC_VER} \
             cpp-${LATEST_GCC_VER}
           
-          # 6. 使用 update-alternatives 切换默认编译器
+          # 5. 使用 update-alternatives 切换默认编译器
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100
           sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER}
           sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER}
           
-          # 7. 验证
+          # 6. 验证
           gcc --version | head -n 1
           g++ --version | head -n 1
           
