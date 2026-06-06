@@ -9,7 +9,7 @@ on:
         default: 'false'
         type: boolean
   schedule:
-    - cron: '0 10 1,15 * *' # 每月 1 号和 15 号 UTC 10:00
+    - cron: '0 10 1,15 * *' # 每月 1 号和 15 号 UTC 10:00 (北京时间 18:00)
 
 env:
   TKG_DIR: linux-tkg
@@ -36,7 +36,7 @@ jobs:
 
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
-        run: echo "✅ GCC 稳定版已是最新，跳过。" && exit 0
+        run: echo "✅ GCC 稳定版已是最新 (${{ env.NEW_VERSION }})，跳过构建。" && exit 0
 
       - name: 🧹 Free Disk Space
         if: env.SKIP_BUILD != 'true'
@@ -46,22 +46,28 @@ jobs:
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "⏰ Build Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 
-      - name: 📦 Install Base Dependencies
+      - name: 📦 Install Base Dependencies (Ubuntu Official)
         if: env.SKIP_BUILD != 'true'
         run: |
+          echo "::group::📦 Installing Base Dependencies"
           sudo apt-get update
+          # 使用 Ubuntu 官方源安装所有基础依赖，确保与系统核心库兼容
+          # 注意：这里故意不包含 gcc/clang，因为我们要后面手动指定版本
           sudo apt-get install -y \
-            git bc bison flex libssl-dev libelf-dev make \
-            fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
-            rsync zstd unzip curl software-properties-common
-            
+            bc bison build-essential ccache cpio fakeroot flex git kmod \
+            libdw-dev libelf-dev libncurses-dev libssl-dev lz4 \
+            rsync schedtool wget zstd debhelper bsdutils \
+            qtbase5-dev dpkg-dev libqt5core5a libqt5gui5 libqt5widgets5
+          echo "::endgroup::"
+
       - name: ⚡ Install GCC from Debian Sid (Wild Mode)
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::⚡ Installing GCC from Debian Sid"
           
-          # 1. 添加 Debian Sid 源 (不使用密钥环验证，CI 环境可接受)
+          # 1. 添加 Debian Sid 源 (trusted=yes 跳过密钥验证，CI 环境专用)
           echo "deb [trusted=yes] http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
           
           # 2. 更新源
@@ -73,27 +79,27 @@ jobs:
                            head -n 1)
           
           if [ -z "$LATEST_GCC_VER" ]; then
+            echo "⚠️ Failed to detect latest GCC, defaulting to 16."
             LATEST_GCC_VER="16"
           fi
           
           echo "✅ Target GCC Version: ${LATEST_GCC_VER}"
           echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
           
-          # 4. 【狂野】直接安装，让 apt 自己解决依赖
-          # [trusted=yes] 已经跳过了密钥验证，所以不需要 --allow-unauthenticated
-          # --no-install-recommends 减少非必要依赖
+          # 4. 【狂野】安装 GCC 相关组件
           sudo apt-get install -y  \
             gcc-${LATEST_GCC_VER} \
             g++-${LATEST_GCC_VER} \
             cpp-${LATEST_GCC_VER}
           
-          # 5. 使用 update-alternatives 切换默认编译器
+          # 5. 使用 update-alternatives 切换系统默认编译器
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100
           sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER}
           sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER}
           
           # 6. 验证
+          echo "🔍 Compiler Verification:"
           gcc --version | head -n 1
           g++ --version | head -n 1
           
@@ -121,6 +127,8 @@ jobs:
             chmod +x ./auto_bore_setup.sh
             export CFG_FILE="./customization-gcc-stable.cfg"
             ./auto_bore_setup.sh
+          else
+            echo "⚠️ auto_bore_setup.sh not found, skipping."
           fi
           echo "::endgroup::"
 
@@ -131,10 +139,10 @@ jobs:
           cd $TKG_DIR
           cp ../customization-gcc-stable.cfg ./customization.cfg
           
-          # 【关键】通过 sed 强制注入配置
+          # 【关键】通过 sed 强制注入配置，确保 install.sh 读到正确设置
           sed -i 's/^_compiler=.*/_compiler="gcc"/' customization.cfg
           sed -i 's/^_lto_mode=.*/_lto_mode="none"/' customization.cfg
-          # 【修正】留空 CUSTOM_GCC_PATH，因为我们已经通过 update-alternatives 修改了系统默认 gcc
+          # 留空 CUSTOM_GCC_PATH，因为我们已经通过 update-alternatives 修改了系统默认 gcc
           sed -i 's|^CUSTOM_GCC_PATH=.*|CUSTOM_GCC_PATH=""|' customization.cfg
           sed -i 's/^_llvm_ias=.*/_llvm_ias=""/' customization.cfg
           
@@ -152,14 +160,17 @@ jobs:
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
           
-          # 【关键】精准剔除 TKG 脚本中的 Clang/LLVM 依赖
-          sed -i '/sudo apt install/s/ llvm\| clang\| lld//g' install.sh
+          # 【关键】直接删除 TKG 脚本中的依赖安装行，防止它再次尝试 apt install
+          sed -i '/^sudo apt install/d' install.sh
           
           # 【关键】导出 CC/CXX 变量，确保 make 使用正确的编译器
           export CC=gcc-${GCC_VER}
           export CXX=g++-${GCC_VER}
           
-          echo "🚀 Starting Compilation with ${CC}..."
+          echo "🚀 Starting Compilation..."
+          echo "   Compiler: ${CC} (Debian Sid GCC ${GCC_VER})"
+          echo "   Scheduler: ${CPU_SCHEDULER}"
+          echo "   Version: ${NEW_VERSION}"
           
           # 使用 sudo -E 保留环境变量
           sudo -E script -qec './install.sh install' /dev/null
@@ -171,11 +182,14 @@ jobs:
         run: |
           echo "::group::🗑️ Cleanup"
           if [ -d "$TKG_DIR/linux-src-git" ]; then
+            echo "Removing linux-src-git..."
             sudo rm -rf $TKG_DIR/linux-src-git
           fi
           if [ -d "$TKG_DIR/DEBS" ]; then
+            echo "Removing debug and libc-dev packages..."
             sudo rm -f $TKG_DIR/DEBS/*dbg*.deb
             sudo rm -f $TKG_DIR/DEBS/*libc-dev*.deb
+            echo "Remaining packages:"
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
@@ -191,13 +205,14 @@ jobs:
             
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
-            - Compiler: **GCC ${{ env.GCC_VER }}**
+            - Compiler: **GCC ${{ env.GCC_VER }} (Debian Sid)**
             - LTO: None
             - Arch Optimization: x86-64-v3
             - Kernel Version: ${{ env.NEW_VERSION }}
             
             **Notes:**
             - Optimized for stability and driver compatibility.
+            - Built with Debian Sid GCC on Ubuntu Runner.
           files: |
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
@@ -207,8 +222,10 @@ jobs:
       - name: 💾 Commit Config
         if: env.VERSION_CHANGED == 'true'
         run: |
+          echo "::group::💾 Git Commit"
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
           git add customization-gcc-stable.cfg
           git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}" || echo "No changes"
           git push
+          echo "::endgroup::"
