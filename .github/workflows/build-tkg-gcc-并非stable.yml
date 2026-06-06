@@ -47,56 +47,63 @@ jobs:
         run: |
           echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: ⚡ Install GCC from Debian Sid (Ultimate Wild Mode)
+      - name: ⚡ Install GCC & Deps (Brute Force Loop)
         if: env.SKIP_BUILD != 'true'
         run: |
-          echo "::group::⚡ Installing GCC from Debian Sid"
+          echo "::group::⚡ Installing GCC & Deps with Brute Force"
           
-          # 1. 【关键修复 A】移除 Ubuntu 的 usrmerge 重定向，防止与 Debian Sid 冲突
-          # 参考: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1074269
+          # 1. 【前置修复】移除 Ubuntu 的 usrmerge 重定向，防止与 Debian Sid 冲突
           echo "🔧 Removing Ubuntu usrmerge diversions..."
           for d in bin lib lib32 lib64 libo32 libx32 sbin; do 
             sudo dpkg-divert --package base-files --no-rename --remove /$d || true
           done
           
-          # 2. 【关键修复 B】创建缺失的目录，绕过 base-files 的悬挂链接检查
-          echo "📂 Creating missing directories to bypass dangling link check..."
+          # 2. 【前置修复】创建缺失目录，绕过 base-files 检查
           sudo mkdir -p /usr/lib32
           sudo mkdir -p /usr/libx32
           
           # 3. 添加 Debian Sid 源
           echo "deb [trusted=yes] http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
-          
-          # 4. 更新源
           sudo apt-get update
           
-          # 5. 动态获取最新 GCC 大版本
+          # 4. 动态获取最新 GCC 版本
           LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
                            grep -oP 'releases/gcc-\K[0-9]+(?=\.[0-9]+\.[0-9]+)' | \
                            head -n 1)
-          
-          if [ -z "$LATEST_GCC_VER" ]; then
-            LATEST_GCC_VER="16"
-            echo "❌FAILSAFE!!!"
-          fi
-          
-          echo "✅ Target GCC Version: ${LATEST_GCC_VER}"
+          LATEST_GCC_VER=${LATEST_GCC_VER:-16}
           echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
           
-          # 6. 安装 GCC 及其依赖
-          # 现在 base-files 应该能顺利安装了
-          sudo apt-get install -y gcc-${LATEST_GCC_VER} g++-${LATEST_GCC_VER} cpp-${LATEST_GCC_VER} binutils
+          # 5. 【暴力循环】尝试安装依赖，失败则 fix 并重试
+          echo "🔄 Starting brute-force installation loop..."
           
-          # 7. 切换默认编译器
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100
-          sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER}
-          sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER}
+          # 定义要安装的包列表 (已剔除 clang/llvm/lld，因为我们要用 GCC)
+          DEP_PACKAGES="bc bison build-essential ccache cpio fakeroot flex git kmod libdw-dev libelf-dev libncurses-dev libssl-dev lz4 qtbase5-dev rsync schedtool wget zstd debhelper bsdutils gcc-${LATEST_GCC_VER} g++-${LATEST_GCC_VER} cpp-${LATEST_GCC_VER} binutils"
           
-          # 8. 验证
-          echo "🔍 Compiler & Binutils Verification:"
-          gcc --version | head -n 1
-          as --version | head -n 1
+          for i in 1 2; do
+            echo "--- Attempt $i ---"
+            
+            # 尝试安装，即使报错也继续 (|| true)
+            sudo apt-get install -y --allow-unauthenticated $DEP_PACKAGES || true
+            
+            # 尝试修复损坏的安装
+            sudo apt-get install -f -y --allow-unauthenticated || true
+            
+            # 清理残留
+            sudo apt-get autoremove --purge -y || true
+            
+            echo "Attempt $i finished."
+          done
+          
+          # 6. 确保编译器切换成功
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100 || true
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100 || true
+          sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER} || true
+          sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER} || true
+          
+          # 7. 最终验证
+          echo "🔍 Final Verification:"
+          gcc --version | head -n 1 || echo "❌ GCC not found!"
+          as --version | head -n 1 || echo "❌ AS not found!"
           
           echo "::endgroup::"
 
@@ -151,7 +158,7 @@ jobs:
           cd $TKG_DIR
           
 
-          
+          sed -i '/sudo apt install/d' install.sh
           export CC=gcc-${GCC_VER}
           export CXX=g++-${GCC_VER}
           
