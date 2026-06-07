@@ -9,7 +9,7 @@ on:
         default: 'false'
         type: boolean
   schedule:
-    - cron: '0 10 1,15 * *'
+    - cron: '0 18 */3 * *' # 每 3 天的 UTC 18:00 (北京时间 2:00) 检查一次
 
 env:
   TKG_DIR: linux-tkg
