@@ -45,17 +45,6 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
-      - name: 📦 Install Base Dependencies
-        if: env.SKIP_BUILD != 'true'
-        run: |
-          echo "::group::📦 Installing Base Dependencies"
-          sudo apt-get update
-          # 安装基础依赖，但不安装 clang/llvm/lld，我们将手动安装最新版
-          sudo apt-get install -y \
-            git bc bison flex libssl-dev libelf-dev make gcc \
-            fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
-            rsync zstd unzip curl software-properties-common
-          echo "::endgroup::"
       - name: ⚡ Install & Configure Latest LLVM
         if: env.SKIP_BUILD != 'true'
         run: >
@@ -223,18 +212,11 @@ jobs:
           cd $TKG_DIR
 
 
-          # 【关键修复】删除所有包含 "sudo apt install" 的行，无论是否有缩进
+          # 【关键修复】精准剔除 TKG 脚本中涉及 llvm/clang/lld 的安装行 # 逻辑：如果一行中包含 "sudo apt install" 且同时包含 "llvm" 或 "clang" 或 "lld"，则删除整行 # 使用 -E (扩展正则) 和 | (或) 来匹配任意一个关键词 sed -i -E '/sudo apt install.*(llvm|clang|lld)/d' install.sh
 
-          # 使用 /pattern/d 语法，只要行内包含该字符串就删除整行
-
-          sed -i '/sudo apt install/d' install.sh
+          # 验证一下是否剔除成功 echo "🔍 Checking for remaining LLVM/Clang install lines:" grep -n "apt install.*\(llvm\|clang\|lld\)" install.sh && echo "⚠️ Warning: Some lines might remain!" || echo "✅ Successfully removed all LLVM/Clang install lines."
 
 
-          # 验证一下是否删除成功 (可选，用于调试)
-
-          echo "🔍 Checking if apt install line is removed:"
-
-          grep -n "apt install" install.sh || echo "✅ Successfully removed all apt install lines."
 
 
           # 【关键】导出 CC/CXX 变量，确保 make 使用正确的编译器
