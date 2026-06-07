@@ -8,8 +8,8 @@ on:
         required: false
         default: 'false'
         type: boolean
-  schedule:
-    - cron: '0 12 8,22 * *' # 每月 8 号和 22 号 UTC 12:00 (北京时间 20:00)
+#  schedule:
+#    - cron: '0 12 8,22 * *' # 每月 8 号和 22 号 UTC 12:00 (北京时间 20:00)
 
 env:
   TKG_DIR: linux-tkg
