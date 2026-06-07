@@ -8,8 +8,8 @@ on:
         required: false
         default: "false"
         type: boolean
-  schedule:
-    - cron: 0 10 8,22 * *
+#  schedule:
+#    - cron: 0 10 8,22 * *
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
