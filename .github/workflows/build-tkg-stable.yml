@@ -211,10 +211,11 @@ jobs:
 
           cd $TKG_DIR
 
+          sed -i '/sudo apt install/s/ llvm\| clang\| lld//g' install.sh
 
-          # 【关键修复】精准剔除 TKG 脚本中涉及 llvm/clang/lld 的安装行 # 逻辑：如果一行中包含 "sudo apt install" 且同时包含 "llvm" 或 "clang" 或 "lld"，则删除整行 # 使用 -E (扩展正则) 和 | (或) 来匹配任意一个关键词 sed -i -E '/sudo apt install.*(llvm|clang|lld)/d' install.sh
+          # 验证一下是否剔除成功
 
-          # 验证一下是否剔除成功 echo "🔍 Checking for remaining LLVM/Clang install lines:" grep -n "apt install.*\(llvm\|clang\|lld\)" install.sh && echo "⚠️ Warning: Some lines might remain!" || echo "✅ Successfully removed all LLVM/Clang install lines."
+          grep -n "apt install.*\(llvm\|clang\|lld\)"
 
 
 
