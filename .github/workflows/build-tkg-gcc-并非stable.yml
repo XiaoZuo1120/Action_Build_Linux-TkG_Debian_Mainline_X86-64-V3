@@ -213,4 +213,9 @@ jobs:
           git config --local user.name "GitHub Action Bot"
           git add customization-gcc-stable.cfg
           git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}" || echo "No changes"
-          git push
+                    # --rebase: 将你的提交“变基”到远程最新提交之后，保持历史线性整洁
+          # --allow-unrelated-histories: 防止极端情况下的报错
+          git pull --rebase origin main
+
+          # 4. 推送
+          git push origin main
