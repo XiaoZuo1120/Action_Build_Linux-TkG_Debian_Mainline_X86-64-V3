@@ -215,7 +215,7 @@ jobs:
 
           # 验证一下是否剔除成功
 
-          grep -n "apt install.*\(llvm\|clang\|lld\)"
+          grep -n "apt install.*\(llvm\|clang\|lld\)" || true 
 
 
 
