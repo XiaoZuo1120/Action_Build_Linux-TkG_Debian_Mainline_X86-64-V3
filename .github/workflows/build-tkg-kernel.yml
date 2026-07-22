@@ -1,5 +1,6 @@
 ---
 name: 🐧 Build Linux-TkG Kernel (Debian/Sid)
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,19 +11,23 @@ on:
         type: boolean
 #  schedule:
 #    - cron: 0 10 8,22 * *
+
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
+
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: 🔍 Check Latest Kernel Version
         id: check_version
         run: |
@@ -31,14 +36,17 @@ jobs:
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version.sh
           echo "::endgroup::"
+
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ 内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
+
       - name: 🧹 Free Disk Space (Slimhub)
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
+
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
@@ -46,6 +54,7 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
+
       - name: 📦 Install Base Dependencies
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -57,22 +66,22 @@ jobs:
             fakeroot dpkg-dev debhelper wget cpio kmod libncurses-dev \
             rsync zstd unzip curl clang llvm lld
           echo "::endgroup::"
+
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
+
       - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
           echo "::group::📂 Cloning TKG"
-
           echo "📥 克隆 linux-tkg 仓库..."
-
           git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-
           echo "::endgroup::"
+
       - name: 🤖 Auto-Configure BORE & Patches
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -80,40 +89,32 @@ jobs:
           if [ -f "./auto_bore_setup.sh" ]; then
             echo "🚀 正在执行 BORE 自动适配..."
             chmod +x ./auto_bore_setup.sh
+            export CFG_FILE="./customization.cfg"
             ./auto_bore_setup.sh
           else
             echo "⚠️ 未找到 auto_bore_setup.sh，跳过 BORE 适配。"
           fi
           echo "::endgroup::"
+
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
           echo "::group::📝 Final Config Prep"
-
           cd $TKG_DIR
 
-
           # 复制根目录已修改好的 cfg
-
           cp ../customization.cfg ./customization.cfg
 
-
           # 【关键】从 cfg 中提取实际使用的调度器，用于 Release 显示
-
           ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-
           echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
 
-
           echo "--- 📋 最终构建配置 ---"
-
           grep -E "_version|_cpusched|_compiler|_processor_opt|_lto_mode" ./customization.cfg
-
           echo "----------------------"
-
           echo "✅ 检测到调度器: ${ACTUAL_SCHEDULER}"
-
           echo "::endgroup::"
+
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -127,8 +128,9 @@ jobs:
 
           # 使用 script 模拟终端以解决交互问题
           # TKG 脚本会自动检测并使用系统中可用的最佳编译器
-          sudo script -qec './install.sh install' /dev/null
+          sudo -E script -qec './install.sh install' /dev/null
           echo "::endgroup::"
+
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
@@ -148,6 +150,7 @@ jobs:
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
+
       - name: 🏷️ Create GitHub Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
@@ -171,22 +174,46 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: >
-          echo "::group::💾 Git Commit"
+        run: |
+          echo "::group::💾 Git Commit & Push"
 
-          git config --local user.email "action@github.com"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
 
-          git config --local user.name "GitHub Action Bot"
+          MAX_RETRIES=5
+          RETRY=0
+          BRANCH="${GITHUB_REF#refs/heads/}"
 
-          git add customization.cfg
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+            RETRY=$((RETRY+1))
+            echo "🔄 Attempt $RETRY/$MAX_RETRIES"
 
-          git commit -m "chore: update kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+            # 强制同步远程最新（丢弃所有本地改动）
+            git fetch origin
+            git reset --hard "origin/$BRANCH"
 
-          git push
+            # 提交我们的修改
+            git add customization.cfg
+            git commit -m "chore: update kernel version to ${{ env.NEW_VERSION }}"
+
+            # 尝试推送
+            if git push origin "$BRANCH"; then
+              echo "✅ Push successful!"
+              exit 0
+            else
+              echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
+              sleep 3
+            fi
+          done
+
+          echo "❌ Failed to push after $MAX_RETRIES attempts"
+          exit 1
 
           echo "::endgroup::"
+
       - name: ❌ Notify Failure
         if: failure()
         run: |
