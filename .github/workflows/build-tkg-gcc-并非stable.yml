@@ -1,126 +1,144 @@
+---
 name: 🐧 Build Linux-TkG Kernel (GCC Stable - Sid Optimized)
-
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: '🔨 强制重新编译'
+        description: 🔨 强制重新编译
         required: false
-        default: 'false'
+        default: "false"
         type: boolean
-#  schedule:
-#    - cron: '0 18 */3 * *' # 每 3 天的 UTC #18:00 (北京时间 2:00) 检查一次
-
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
-
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: 🔍 Check Latest Stable Version
         id: check_version
         run: |
           chmod +x check_version-gcc-stable.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-gcc-stable.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: echo "✅ GCC 稳定版已是最新，跳过。" && exit 0
-
       - name: 🧹 Free Disk Space
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
-
       - name: 📅 Generate Timestamp
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
       - name: ⚡ Install GCC & Deps (Brute Force Loop)
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::⚡ Installing GCC & Deps with Brute Force"
-          
+
+
           # 1. 【前置修复】移除 Ubuntu 的 usrmerge 重定向，防止与 Debian Sid 冲突
+
           echo "🔧 Removing Ubuntu usrmerge diversions..."
-          for d in bin lib lib32 lib64 libo32 libx32 sbin; do 
+
+          for d in bin lib lib32 lib64 libo32 libx32 sbin; do
             sudo dpkg-divert --package base-files --no-rename --remove /$d || true
           done
-          
+
+
           # 2. 【前置修复】创建缺失目录，绕过 base-files 检查
+
           sudo mkdir -p /usr/lib32
+
           sudo mkdir -p /usr/libx32
-          
+
+
           # 3. 添加 Debian Sid 源
+
           echo "deb [trusted=yes] http://deb.debian.org/debian sid main" | sudo tee /etc/apt/sources.list.d/debian-sid.list
+
           sudo apt-get update
-          
-          # 4. 动态获取最新 GCC 版本
-          LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
-                           grep -oP 'releases/gcc-\K[0-9]+(?=\.[0-9]+\.[0-9]+)' | \
-                           head -n 1)
-          LATEST_GCC_VER=${LATEST_GCC_VER:-16}
-          echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
-          
+
+
+          # 4. 动态获取最新 GCC 版本# 获取所有 GCC 版本号，按语义版本排序，取最大值
+            LATEST_GCC_VER=$(curl -s https://github.com/gcc-mirror/gcc/tags | \
+                 grep -oP 'releases/gcc-\K[0-9]+\.[0-9]+\.[0-9]+' | \
+                 sort -V | \
+                 tail -n 1 | \
+                 cut -d. -f1)
+
+            LATEST_GCC_VER=${LATEST_GCC_VER:-16}
+
+            echo "GCC_VER=${LATEST_GCC_VER}" >> $GITHUB_ENV
+
+
           # 5. 【暴力循环】尝试安装依赖，失败则 fix 并重试
+
           echo "🔄 Starting brute-force installation loop..."
-          
+
+
           # 定义要安装的包列表 (已剔除 clang/llvm/lld，因为我们要用 GCC)
+
           DEP_PACKAGES="bc bison build-essential ccache cpio fakeroot flex git kmod libdw-dev libelf-dev libncurses-dev libssl-dev lz4 qtbase5-dev rsync schedtool wget zstd debhelper bsdutils gcc-${LATEST_GCC_VER} g++-${LATEST_GCC_VER} cpp-${LATEST_GCC_VER} binutils"
-          
+
+
           for i in 1 2; do
             echo "--- Attempt $i ---"
-            
+
             # 尝试安装，即使报错也继续 (|| true)
             sudo apt-get install -y --allow-unauthenticated $DEP_PACKAGES || true
-            
+
             # 尝试修复损坏的安装
             sudo apt-get install -f -y --allow-unauthenticated || true
-            
+
             # 清理残留
             sudo apt-get autoremove --purge -y || true
-            
+
             echo "Attempt $i finished."
           done
-          
-          # 6. 确保编译器切换成功
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100 || true
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100 || true
-          sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER} || true
-          sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER} || true
-          
-          # 7. 最终验证
-          echo "🔍 Final Verification:"
-          gcc --version | head -n 1 || echo "❌ GCC not found!"
-          as --version | head -n 1 || echo "❌ AS not found!"
-          
-          echo "::endgroup::"
 
+
+          # 6. 确保编译器切换成功
+
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${LATEST_GCC_VER} 100 || true
+
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${LATEST_GCC_VER} 100 || true
+
+          sudo update-alternatives --set gcc /usr/bin/gcc-${LATEST_GCC_VER} || true
+
+          sudo update-alternatives --set g++ /usr/bin/g++-${LATEST_GCC_VER} || true
+
+
+          # 7. 最终验证
+
+          echo "🔍 Final Verification:"
+
+          gcc --version | head -n 1 || echo "❌ GCC not found!"
+
+          as --version | head -n 1 || echo "❌ AS not found!"
+
+
+          echo "::endgroup::"
       - name: ⚙️ Optimize Git
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
-
       - name: 📂 Clone Linux-TkG
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📂 Cloning TKG"
-          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          echo "::endgroup::"
 
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+
+          echo "::endgroup::"
       - name: 🤖 Auto-Configure BORE
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -131,43 +149,51 @@ jobs:
             ./auto_bore_setup.sh
           fi
           echo "::endgroup::"
-
       - name: 📝 Prepare & Inject Config
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📝 Final Config Prep"
-          cd $TKG_DIR
-          cp ../customization-gcc-stable.cfg ./customization.cfg
-          
-          sed -i 's/^_compiler=.*/_compiler="gcc"/' customization.cfg
-          sed -i 's/^_lto_mode=.*/_lto_mode="none"/' customization.cfg
-          sed -i 's|^CUSTOM_GCC_PATH=.*|CUSTOM_GCC_PATH=""|' customization.cfg
-          sed -i 's/^_llvm_ias=.*/_llvm_ias=""/' customization.cfg
-          
-          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
-          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
-          
-          echo "--- 📋 Final Configuration ---"
-          grep -E "_version|_cpusched|_compiler|_lto_mode" ./customization.cfg
-          echo "::endgroup::"
 
+          cd $TKG_DIR
+
+          cp ../customization-gcc-stable.cfg ./customization.cfg
+
+
+          sed -i 's/^_compiler=.*/_compiler="gcc"/' customization.cfg
+
+          sed -i 's/^_lto_mode=.*/_lto_mode="none"/' customization.cfg
+
+          sed -i 's|^CUSTOM_GCC_PATH=.*|CUSTOM_GCC_PATH=""|' customization.cfg
+
+          sed -i 's/^_llvm_ias=.*/_llvm_ias=""/' customization.cfg
+
+
+          ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+
+          echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
+
+
+          echo "--- 📋 Final Configuration ---"
+
+          grep -E "_version|_cpusched|_compiler|_lto_mode" ./customization.cfg
+
+          echo "::endgroup::"
       - name: 🔨 Compile Kernel (Let TKG Handle Deps)
         if: env.SKIP_BUILD != 'true'
         run: |
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
-          
+
 
           sed -i '/sudo apt install/d' install.sh
           export CC=gcc-${GCC_VER}
           export CXX=g++-${GCC_VER}
-          
-          echo "🚀 Starting Compilation with ${CC}..."
-          
-          sudo -E script -qec './install.sh install' /dev/null
-          
-          echo "::endgroup::"
 
+          echo "🚀 Starting Compilation with ${CC}..."
+
+          sudo -E script -qec './install.sh install' /dev/null
+
+          echo "::endgroup::"
       - name: 🗑️ Cleanup
         if: always()
         run: |
@@ -181,7 +207,6 @@ jobs:
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
-
       - name: 🏷️ Create Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
@@ -190,14 +215,14 @@ jobs:
           name: Linux-TkG GCC Stable ${{ env.NEW_VERSION }}
           body: |
             Automated build of Linux-TkG kernel with **Latest GCC**.
-            
+
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
             - Compiler: **GCC ${{ env.GCC_VER }} (Debian Sid)**
             - LTO: None
             - Arch Optimization: x86-64-v3
             - Kernel Version: ${{ env.NEW_VERSION }}
-            
+
             **Notes:**
             - Built with Debian Sid GCC on Ubuntu Runner.
           files: |
@@ -205,17 +230,41 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 💾 Commit Config
-        if: env.VERSION_CHANGED == 'true'
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action Bot"
-          git add customization-gcc-stable.cfg
-          git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}" || echo "No changes"
-                    # --rebase: 将你的提交“变基”到远程最新提交之后，保持历史线性整洁
-          # --allow-unrelated-histories: 防止极端情况下的报错
-          git pull --rebase origin main
+  if: env.VERSION_CHANGED == 'true'
+  run: |
+    echo "::group::💾 Git Commit & Push"
 
-          # 4. 推送
-          git push origin main
+    git config --local user.email "github-actions[bot]@users.noreply.github.com"
+    git config --local user.name "github-actions[bot]"
+
+    MAX_RETRIES=5
+    RETRY=0
+    BRANCH="${GITHUB_REF#refs/heads/}"
+
+    while [ $RETRY -lt $MAX_RETRIES ]; do
+      RETRY=$((RETRY+1))
+      echo "🔄 Attempt $RETRY/$MAX_RETRIES"
+
+      # 强制同步远程最新（丢弃所有本地改动）
+      git fetch origin
+      git reset --hard "origin/$BRANCH"
+
+      # 提交我们的修改
+      git add customization-gcc-stable.cfg
+      git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}"
+
+      # 尝试推送
+      if git push origin "$BRANCH"; then
+        echo "✅ Push successful!"
+        exit 0
+      else
+        echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
+        sleep 3
+      fi
+    done
+
+    echo "❌ Failed to push after $MAX_RETRIES attempts"
+    exit 1
+
+    echo "::group::"

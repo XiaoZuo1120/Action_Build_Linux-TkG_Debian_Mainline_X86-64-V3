@@ -8,8 +8,6 @@ on:
         required: false
         default: "false"
         type: boolean
-#  schedule:
-#    - cron: 0 12 */3 * *
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
@@ -206,50 +204,31 @@ jobs:
           echo "::endgroup::"
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
           echo "::group::🔨 Kernel Compilation"
-
           cd $TKG_DIR
-
           sed -i '/sudo apt install/s/ llvm\| clang\| lld//g' install.sh
-
           # 验证一下是否剔除成功
-
-          grep -n "apt install.*\(llvm\|clang\|lld\)" || true 
-
+          grep -n "apt install.*\(llvm\|clang\|lld\)" || true
 
 
 
           # 【关键】导出 CC/CXX 变量，确保 make 使用正确的编译器
-
           export CC=clang-${LLVM_VER}
-
           export CXX=clang++-${LLVM_VER}
-
           export LD=ld.lld-${LLVM_VER}
-
           export AR=llvm-ar-${LLVM_VER}
-
           export NM=llvm-nm-${LLVM_VER}
-
           export OBJCOPY=llvm-objcopy-${LLVM_VER}
-
           export STRIP=llvm-strip-${LLVM_VER}
 
-
           echo "🚀 Starting Compilation..."
-
           echo "   Compiler: ${CC} (LLVM ${LLVM_VER})"
-
           echo "   Scheduler: ${CPU_SCHEDULER}"
-
           echo "   Version: ${NEW_VERSION}"
 
-
           # 使用 sudo -E 保留环境变量
-
           sudo -E script -qec './install.sh install' /dev/null
-
 
           echo "::endgroup::"
       - name: 🗑️ Cleanup Artifacts & Source
@@ -289,25 +268,49 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: 💾 Commit Updated Config
-        if: env.VERSION_CHANGED == 'true'
-        run: |
-          echo "::group::💾 Git Commit & Push"
+  if: env.VERSION_CHANGED == 'true'
+  run: >
+    echo "::group::💾 Git Commit & Push"
 
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action Bot"
 
-          # 1. 添加文件
-          git add customization-stable.cfg
+    git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 2. 提交更改
-          git commit -m "chore: update stable kernel version to ${{ env.NEW_VERSION }}" || echo "No changes to commit"
+    git config --local user.name "github-actions[bot]"
 
-          # 3. 【关键修复】先拉取远程最新代码，再推送
-          # --rebase: 将你的提交“变基”到远程最新提交之后，保持历史线性整洁
-          # --allow-unrelated-histories: 防止极端情况下的报错
-          git pull --rebase origin main
 
-          # 4. 推送
-          git push origin main
+    MAX_RETRIES=5
 
-          echo "::endgroup::"
+    RETRY=0
+
+    BRANCH="${GITHUB_REF#refs/heads/}"
+
+
+    while [ $RETRY -lt $MAX_RETRIES ]; do
+      RETRY=$((RETRY+1))
+      echo "🔄 Attempt $RETRY/$MAX_RETRIES"
+
+      # 强制同步远程最新（丢弃所有本地改动）
+      git fetch origin
+      git reset --hard "origin/$BRANCH"
+
+      # 提交我们的修改
+      git add customization-stable.cfg
+      git commit -m "chore: update stable kernel version to ${{ env.NEW_VERSION }}"
+
+      # 尝试推送
+      if git push origin "$BRANCH"; then
+        echo "✅ Push successful!"
+        exit 0
+      else
+        echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
+        sleep 3
+      fi
+    done
+
+
+    echo "❌ Failed to push after $MAX_RETRIES attempts"
+
+    exit 1
+
+
+    echo "::endgroup::"
