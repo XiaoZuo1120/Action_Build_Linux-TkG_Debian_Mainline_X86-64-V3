@@ -206,41 +206,64 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 💾 Commit Config
-        if: env.VERSION_CHANGED == 'true'
-        run: |
-          echo "::group::💾 Git Commit & Push"
+- name: 💾 Commit Config
+  if: env.VERSION_CHANGED == 'true'
+  run: |
+    set -euo pipefail
+    echo "::group::💾 Git Commit & Push"
 
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+    git config --local user.email "github-actions[bot]@users.noreply.github.com"
+    git config --local user.name "github-actions[bot]"
 
-          MAX_RETRIES=5
-          RETRY=0
-          BRANCH="${GITHUB_REF#refs/heads/}"
+    BRANCH="${GITHUB_REF#refs/heads/}"
+    TARGET_FILE="customization-gcc-stable.cfg"
 
-          while [ $RETRY -lt $MAX_RETRIES ]; do
-            RETRY=$((RETRY+1))
-            echo "🔄 Attempt $RETRY/$MAX_RETRIES"
+    # 1. 文件存在性检查
+    if [ ! -f "$TARGET_FILE" ]; then
+      echo "❌ $TARGET_FILE not found"
+      exit 1
+    fi
 
-            # 强制同步远程最新（丢弃所有本地改动）
-            git fetch origin
-            git reset --hard "origin/$BRANCH"
+    # 2. 暂存并判断是否真的有变更（无变更则优雅退出，不再报错）
+    git add "$TARGET_FILE"
+    if git diff --cached --quiet; then
+      echo "ℹ️ No changes in $TARGET_FILE, nothing to commit."
+      echo "::endgroup::"
+      exit 0
+    fi
 
-            # 提交我们的修改
-            git add customization-gcc-stable.cfg
-            git commit -m "chore: update gcc stable version to ${{ env.NEW_VERSION }}"
+    git commit -m "chore: update gcc stable version to ${NEW_VERSION}"
 
-            # 尝试推送
-            if git push origin "$BRANCH"; then
-              echo "✅ Push successful!"
-              exit 0
-            else
-              echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
-              sleep 3
-            fi
-          done
+    # 3. 带重试的 fetch + rebase + push
+    MAX_RETRIES=5
+    RETRY=0
+    while [ $RETRY -lt $MAX_RETRIES ]; do
+      RETRY=$((RETRY+1))
+      echo "🔄 Attempt $RETRY/$MAX_RETRIES"
 
-          echo "❌ Failed to push after $MAX_RETRIES attempts"
-          exit 1
+      if ! git fetch origin "$BRANCH"; then
+        echo "⚠️ fetch failed, retrying in 3s..."
+        sleep 3
+        continue
+      fi
 
-          echo "::endgroup::"
+      # rebase 到远程最新；冲突时保留本地生成的版本（rebase 中 theirs=本地提交）
+      if ! git rebase -X theirs "origin/$BRANCH"; then
+        echo "⚠️ Rebase conflict, aborting and retrying..."
+        git rebase --abort || true
+        sleep 3
+        continue
+      fi
+
+      if git push origin "HEAD:$BRANCH"; then
+        echo "✅ Push successful!"
+        echo "::endgroup::"
+        exit 0
+      else
+        echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
+        sleep 3
+      fi
+    done
+
+    echo "❌ Failed to push after $MAX_RETRIES attempts"
+    exit 1
