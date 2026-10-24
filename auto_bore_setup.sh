@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 自动 BORE 调度器适配脚本 (最终修正版)
+# 自动 BORE 调度器适配脚本 (模糊版本搜索版)
 # ==============================================================================
 
 set -e
@@ -32,16 +32,16 @@ fi
 
 echo "🔍 原始版本字符串: $RAW_VER"
 
-# 提取主版本号 x.y
+# 只提取主次版本号 x.y
 KERNEL_MAJOR_MINOR=$(echo "$RAW_VER" | sed 's/^v//' | grep -oE '[0-9]+\.[0-9]+' | head -n 1)
 
 if [ -z "$KERNEL_MAJOR_MINOR" ]; then
-    echo "❌ 错误: 无法从 '$RAW_VER' 中提取主版本号 (x.y)。默认使用 eevdf。"
+    echo "❌ 错误: 无法从 '$RAW_VER' 中提取主次版本号 (x.y)。默认使用 eevdf。"
     sed -i 's|^_cpusched=.*|_cpusched="eevdf"|' "$CFG_FILE"
     exit 0
 fi
 
-echo "✅ 检测到内核主版本: $KERNEL_MAJOR_MINOR"
+echo "✅ 检测到内核主次版本: $KERNEL_MAJOR_MINOR"
 
 # --- 2. 下载并解压 BORE ---
 echo "📥 正在下载 BORE 源码..."
@@ -73,33 +73,36 @@ if [ -z "$BORE_SRC_DIR" ]; then
     exit 0
 fi
 
-# --- 3. 查找对应版本的补丁 ---
-TARGET_DIR="$BORE_SRC_DIR/patches/stable/linux-${KERNEL_MAJOR_MINOR}-bore"
-LEGACY_DIR="$BORE_SRC_DIR/patches/legacy/linux-${KERNEL_MAJOR_MINOR}-bore"
+# --- 3. 模糊版本搜索补丁 ---
+STABLE_DIR="$BORE_SRC_DIR/patches/stable"
+LEGACY_DIR="$BORE_SRC_DIR/patches/legacy"
 
 PATCH_FILE=""
 
-echo "🔎 正在查找目录: $TARGET_DIR"
-
-if [ -d "$TARGET_DIR" ]; then
-    PATCH_FILE=$(find "$TARGET_DIR" -name "0001*.patch" | head -n 1)
+# 3.1 在 stable 扁平目录中模糊匹配: 0001-linux${KERNEL_MAJOR_MINOR}*-bore-*.patch
+if [ -d "$STABLE_DIR" ]; then
+    echo "🔎 在 stable 目录中模糊搜索 linux-${KERNEL_MAJOR_MINOR}* 补丁..."
+    PATCH_FILE=$(find "$STABLE_DIR" -maxdepth 1 -type f -name "0001-linux${KERNEL_MAJOR_MINOR}*-bore-*.patch" | head -n 1)
     if [ -n "$PATCH_FILE" ]; then
-        echo "✅ 在 stable 目录找到补丁: $(basename $PATCH_FILE)"
+        echo "✅ 在 stable 目录找到补丁: $(basename "$PATCH_FILE")"
     fi
 fi
 
+# 3.2 如果 stable 未找到，回退到 legacy 的 linux-x.y-bore 子目录
 if [ -z "$PATCH_FILE" ] && [ -d "$LEGACY_DIR" ]; then
-    echo "🔎 Stable 未找到，尝试 legacy 目录: $LEGACY_DIR"
-    PATCH_FILE=$(find "$LEGACY_DIR" -name "0001*.patch" | head -n 1)
-    if [ -n "$PATCH_FILE" ]; then
-        echo "✅ 在 legacy 目录找到补丁: $(basename $PATCH_FILE)"
+    LEGACY_TARGET_DIR="$LEGACY_DIR/linux-${KERNEL_MAJOR_MINOR}-bore"
+    echo "🔎 在 legacy 目录中搜索: $LEGACY_TARGET_DIR"
+    if [ -d "$LEGACY_TARGET_DIR" ]; then
+        PATCH_FILE=$(find "$LEGACY_TARGET_DIR" -maxdepth 1 -type f -name "0001*.patch" | head -n 1)
+        if [ -n "$PATCH_FILE" ]; then
+            echo "✅ 在 legacy 目录找到补丁: $(basename "$PATCH_FILE")"
+        fi
     fi
 fi
 
 # --- 4. 处理结果 ---
 if [ -n "$PATCH_FILE" ]; then
     # 【重要】确保 TKG 补丁目录存在
-
     DEST_DIR="$TKG_PATCH_DIR/${KERNEL_MAJOR_MINOR}"
     mkdir -p "$DEST_DIR"
 
