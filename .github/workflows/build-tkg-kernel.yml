@@ -183,36 +183,21 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-          MAX_RETRIES=5
-          RETRY=0
           BRANCH="${GITHUB_REF#refs/heads/}"
 
-          while [ $RETRY -lt $MAX_RETRIES ]; do
-            RETRY=$((RETRY+1))
-            echo "🔄 Attempt $RETRY/$MAX_RETRIES"
+          # 直接提交并推送，无重试逻辑
+          git add customization.cfg
+          git commit -m "chore: update kernel version to ${NEW_VERSION}" || {
+            echo "ℹ️ No changes to commit, skipping."
+            echo "::endgroup::"
+            exit 0
+          }
+          git push origin "HEAD:$BRANCH"
 
-            # 强制同步远程最新（丢弃所有本地改动）
-            git fetch origin
-            git reset --hard "origin/$BRANCH"
-
-            # 提交我们的修改
-            git add customization.cfg
-            git commit -m "chore: update kernel version to ${{ env.NEW_VERSION }}"
-
-            # 尝试推送
-            if git push origin "$BRANCH"; then
-              echo "✅ Push successful!"
-              exit 0
-            else
-              echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
-              sleep 3
-            fi
-          done
-
-          echo "❌ Failed to push after $MAX_RETRIES attempts"
-          exit 1
-
+          echo "✅ Commit & Push successful!"
           echo "::endgroup::"
+        env:
+          NEW_VERSION: ${{ env.NEW_VERSION }}
 
       - name: ❌ Notify Failure
         if: failure()

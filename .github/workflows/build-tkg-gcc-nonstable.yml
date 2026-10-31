@@ -1,5 +1,5 @@
 ---
-name: 🐧 Build Linux-TkG Kernel (GCC Stable - Sid Optimized)
+name: 🐧 Build Linux-TkG Kernel (GCC Non-Stable - Sid Optimized)
 on:
   workflow_dispatch:
     inputs:
@@ -225,74 +225,26 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: 💾 Commit Config
+      - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: >
-          set -euo pipefail
-
+        run: |
           echo "::group::💾 Git Commit & Push"
 
-
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
-
           git config --local user.name "github-actions[bot]"
-
 
           BRANCH="${GITHUB_REF#refs/heads/}"
 
-          TARGET_FILE="customization-gcc-stable.cfg"
-
-
-          if [ ! -f "$TARGET_FILE" ]; then
-            echo "❌ $TARGET_FILE not found"
-            exit 1
-          fi
-
-
-          git add "$TARGET_FILE"
-
-          if git diff --cached --quiet; then
-            echo "ℹ️ No changes in $TARGET_FILE, nothing to commit."
+          # 直接提交并推送，无重试逻辑
+          git add customization-gcc-stable.cfg
+          git commit -m "chore: update gcc non-stable kernel version to ${NEW_VERSION}" || {
+            echo "ℹ️ No changes to commit, skipping."
             echo "::endgroup::"
             exit 0
-          fi
+          }
+          git push origin "HEAD:$BRANCH"
 
-
-          git commit -m "chore: update gcc stable version to ${NEW_VERSION}"
-
-
-          MAX_RETRIES=5
-
-          RETRY=0
-
-          while [ $RETRY -lt $MAX_RETRIES ]; do
-            RETRY=$((RETRY+1))
-            echo "🔄 Attempt $RETRY/$MAX_RETRIES"
-
-            if ! git fetch origin "$BRANCH"; then
-              echo "⚠️ fetch failed, retrying in 3s..."
-              sleep 3
-              continue
-            fi
-
-            if ! git rebase -X theirs "origin/$BRANCH"; then
-              echo "⚠️ Rebase conflict, aborting and retrying..."
-              git rebase --abort || true
-              sleep 3
-              continue
-            fi
-
-            if git push origin "HEAD:$BRANCH"; then
-              echo "✅ Push successful!"
-              echo "::endgroup::"
-              exit 0
-            else
-              echo "❌ Push failed (attempt $RETRY/$MAX_RETRIES), retrying in 3s..."
-              sleep 3
-            fi
-          done
-
-
-          echo "❌ Failed to push after $MAX_RETRIES attempts"
-
-          exit 1
+          echo "✅ Commit & Push successful!"
+          echo "::endgroup::"
+        env:
+          NEW_VERSION: ${{ env.NEW_VERSION }}
