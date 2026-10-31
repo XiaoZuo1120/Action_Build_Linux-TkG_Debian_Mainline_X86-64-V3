@@ -8,6 +8,11 @@ on:
         required: false
         default: "false"
         type: boolean
+      custom_bore_patch:
+        description: "🎯 自定义 BORE 补丁（Base64 编码或 URL，留空则自动搜索）"
+        required: false
+        default: ""
+        type: string
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
@@ -141,6 +146,8 @@ jobs:
           if [ -f "./auto_bore_setup.sh" ]; then
             chmod +x ./auto_bore_setup.sh
             export CFG_FILE="./customization-gcc-stable.cfg"
+            # 传递自定义补丁输入（Base64 或 URL）
+            export CUSTOM_BORE_PATCH="${{ github.event.inputs.custom_bore_patch }}"
             ./auto_bore_setup.sh
           fi
           echo "::endgroup::"
