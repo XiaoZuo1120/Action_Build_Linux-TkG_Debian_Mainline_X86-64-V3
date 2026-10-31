@@ -1,5 +1,5 @@
 ---
-name: 🐧 Build Linux-TkG Kernel (GCC Stable - Sid Optimized)
+name: 🐧 Build Linux-TkG Kernel (GCC Non-Stable - Sid Optimized)
 on:
   workflow_dispatch:
     inputs:
@@ -225,22 +225,19 @@ jobs:
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: 💾 Commit Config
+      - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
         run: |
-          set -euo pipefail
-
           echo "::group::💾 Git Commit & Push"
 
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
           BRANCH="${GITHUB_REF#refs/heads/}"
-          TARGET_FILE="customization-gcc-stable.cfg"
 
           # 直接提交并推送，无重试逻辑
-          git add "$TARGET_FILE"
-          git commit -m "chore: update gcc stable version to ${NEW_VERSION}" || {
+          git add customization-gcc-stable.cfg
+          git commit -m "chore: update gcc non-stable kernel version to ${NEW_VERSION}" || {
             echo "ℹ️ No changes to commit, skipping."
             echo "::endgroup::"
             exit 0
