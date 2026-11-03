@@ -1,5 +1,5 @@
 ---
-name: 🐧 Build Linux-TkG Stable Kernel (Latest LLVM)
+name: 🐧 Build Linux-TkG Stable Kernel (neutron-clang)
 
 on:
   workflow_dispatch:
@@ -9,6 +9,11 @@ on:
         required: false
         default: "false"
         type: boolean
+      custom_bore_patch:
+        description: "🎯 自定义 BORE 补丁（Base64 编码或 URL，留空则自动搜索）"
+        required: false
+        default: ""
+        type: string
 #  schedule:
 #    - cron: '0 12 8,22 * *' # 每月 8 号和 22 号 UTC 12:00 (北京时间 20:00)
 
@@ -54,70 +59,51 @@ jobs:
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
 
-      - name: ⚡ Install & Configure Latest LLVM
+      - name: ⚡ Install neutron-clang & register alternatives
         if: env.SKIP_BUILD != 'true'
         run: |
-          echo "::group::⚡ Installing Latest LLVM"
+          echo "::group::⚡ Installing neutron-clang"
 
-          # 1. 【绝招】下载 latest 页面并提取版本号
-          # 页面标题格式通常为: <title>Release LLVM 22.1.7 · llvm/llvm-project · GitHub</title>
-          echo "📥 Fetching latest release info..."
-          wget -q https://github.com/llvm/llvm-project/releases/latest -O /tmp/llvm-latest.html
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf
 
-          # 从 title 标签中提取版本号 (例如 22.1.7)
-          # 注意：标题格式为 "Release LLVM 22.1.7 ..."，所以要跳过 "LLVM "
-          LATEST_FULL_VER=$(grep -oP '<title>Release \w+ \K[0-9]+\.[0-9]+\.[0-9]+' /tmp/llvm-latest.html || echo "")
+          mkdir -p "$HOME/toolchains/neutron-clang"
+          cd "$HOME/toolchains/neutron-clang"
 
-          if [ -z "$LATEST_FULL_VER" ]; then
-            echo "⚠️ Failed to parse version from HTML, falling back to 22."
-            LLVM_VER="22"
-          else
-            # 提取大版本号 (例如从 22.1.7 提取 22)
-            LLVM_VER=$(echo $LATEST_FULL_VER | cut -d. -f1)
-            echo "✅ Detected Full Version: ${LATEST_FULL_VER}"
-          fi
+          curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+          chmod +x antman
 
-          echo "✅ Target LLVM Major Version: ${LLVM_VER}"
-          echo "LLVM_VER=${LLVM_VER}" >> $GITHUB_ENV
+          ./antman --patch=glibc
 
-          # 清理临时文件
-          rm -f /tmp/llvm-latest.html
+          CLANG_VER=$(grep -A1 '^\[clang-ver\]' build.info | tail -n1 | tr -d ' ')
+          TC_TAG=$(grep -A1 '^\[tag\]' build.info | tail -n1 | tr -d ' ')
+          echo "CLANG_VER=${CLANG_VER}" >> $GITHUB_ENV
+          echo "TC_TAG=${TC_TAG}" >> $GITHUB_ENV
 
-          # 2. 使用官方脚本安装指定版本
-          echo "📥 Installing LLVM-${LLVM_VER} via official script..."
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${LLVM_VER}
+          BIN="$HOME/toolchains/neutron-clang/bin"
+          PRIO=2400
 
-          # 3. 【关键】使用 update-alternatives 强制切换整套 LLVM 工具链
-          LLVM_BIN="/usr/lib/llvm-${LLVM_VER}/bin"
+          echo "🔄 Registering alternatives from ${BIN}..."
 
-          if [ ! -d "$LLVM_BIN" ]; then
-            echo "❌ Error: LLVM bin directory not found at $LLVM_BIN"
-            exit 1
-          fi
+          sudo update-alternatives --install /usr/bin/clang   clang   "${BIN}/clang"   ${PRIO}
+          sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN}/clang++" ${PRIO}
+          sudo update-alternatives --install /usr/bin/clang-cpp clang-cpp "${BIN}/clang-cpp" ${PRIO}
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld "${BIN}/ld.lld" ${PRIO}
+          sudo update-alternatives --install /usr/bin/lld    lld    "${BIN}/lld"    ${PRIO}
 
-          echo "🔄 Switching system defaults to LLVM-${LLVM_VER}..."
-
-          # 核心编译器
-          sudo update-alternatives --install /usr/bin/clang clang ${LLVM_BIN}/clang ${LLVM_VER}
-          sudo update-alternatives --set clang ${LLVM_BIN}/clang
-
-          sudo update-alternatives --install /usr/bin/clang++ clang++ ${LLVM_BIN}/clang++ ${LLVM_VER}
-          sudo update-alternatives --set clang++ ${LLVM_BIN}/clang++
-
-          # 链接器
-          sudo update-alternatives --install /usr/bin/ld.lld ld.lld ${LLVM_BIN}/lld ${LLVM_VER}
-          sudo update-alternatives --set ld.lld ${LLVM_BIN}/lld
-
-          # 归档、符号表、剥离等工具
-          for tool in ar nm objcopy strip objdump readelf; do
-            sudo update-alternatives --install /usr/bin/llvm-${tool} llvm-${tool} ${LLVM_BIN}/llvm-${tool} ${LLVM_VER}
-            sudo update-alternatives --set llvm-${tool} ${LLVM_BIN}/llvm-${tool}
+          for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-readobj llvm-strip llvm-as; do
+            sudo update-alternatives --install "/usr/bin/${tool}" "${tool}" "${BIN}/${tool}" ${PRIO}
           done
 
-          # 验证
+          sudo update-alternatives --set clang   "${BIN}/clang"
+          sudo update-alternatives --set clang++ "${BIN}/clang++"
+          sudo update-alternatives --set ld.lld  "${BIN}/ld.lld"
+
           echo "🔍 Verification:"
-          clang --version | head -n 1
-          ld.lld --version | head -n 1
+          clang --version | head -n1
+          ld.lld --version | head -n1
+          which clang
+          echo "✅ neutron-clang ${CLANG_VER} (tag ${TC_TAG}) registered"
 
           echo "::endgroup::"
 
@@ -142,10 +128,57 @@ jobs:
           if [ -f "./auto_bore_setup.sh" ]; then
             chmod +x ./auto_bore_setup.sh
             export CFG_FILE="./customization-stable.cfg"
+            # 传递自定义补丁输入（Base64 或 URL），留空则由脚本自动搜索
+            export CUSTOM_BORE_PATCH="${{ github.event.inputs.custom_bore_patch }}"
             ./auto_bore_setup.sh
           else
             echo "⚠️ auto_bore_setup.sh not found, skipping."
           fi
+          echo "::endgroup::"
+
+      - name: 🎯 Apply Custom BORE Patch (fallback)
+        if: env.SKIP_BUILD != 'true' && github.event.inputs.custom_bore_patch != ''
+        run: |
+          echo "::group::🎯 Applying custom BORE patch"
+          cd $TKG_DIR
+
+          PATCH_INPUT="${{ github.event.inputs.custom_bore_patch }}"
+          PATCH_FILE="/tmp/custom-bore.patch"
+
+          case "$PATCH_INPUT" in
+            http://*|https://*)
+              echo "📥 Downloading patch from URL..."
+              curl -fsSL "$PATCH_INPUT" -o "$PATCH_FILE"
+              ;;
+            *)
+              echo "📦 Decoding Base64 patch..."
+              echo "$PATCH_INPUT" | base64 -d > "$PATCH_FILE"
+              ;;
+          esac
+
+          if [ ! -s "$PATCH_FILE" ]; then
+            echo "❌ Patch file is empty or invalid."
+            exit 1
+          fi
+
+          echo "🔍 Patch preview:"
+          head -n 20 "$PATCH_FILE"
+
+          # TKG 的源码目录通常叫 linux-src-git；若不存在则回退到当前目录
+          SRC_DIR="linux-src-git"
+          if [ -d "$SRC_DIR" ]; then
+            cd "$SRC_DIR"
+          fi
+
+          if patch -p1 --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
+            patch -p1 < "$PATCH_FILE"
+            echo "✅ Custom BORE patch applied."
+          else
+            echo "⚠️ patch -p1 failed, trying -p0..."
+            patch -p0 < "$PATCH_FILE"
+            echo "✅ Custom BORE patch applied with -p0."
+          fi
+
           echo "::endgroup::"
 
       - name: 📝 Prepare Final Configuration
@@ -154,10 +187,8 @@ jobs:
           echo "::group::📝 Final Config Prep"
           cd $TKG_DIR
 
-          # 复制稳定版 cfg
           cp ../customization-stable.cfg ./customization.cfg
 
-          # 【关键】通过 sed 强制注入 LLVM 配置
           sed -i 's/^_compiler=.*/_compiler="llvm"/' customization.cfg
           sed -i 's/^_lto_mode=.*/_lto_mode="thin"/' customization.cfg
           sed -i 's/^_llvm_ias=.*/_llvm_ias="1"/' customization.cfg
@@ -177,26 +208,22 @@ jobs:
           echo "::group::🔨 Kernel Compilation"
           cd $TKG_DIR
 
-          # 【关键】精准剔除 TKG 脚本中的 Clang/LLVM 依赖 (防止重装旧版)
-          sed -i '/sudo apt install/s/ llvm\| clang\| lld//g' install.sh
-          # 验证一下是否剔除成功
+          sed -i -E '/apt(-get)?[[:space:]]+install/s/\b(llvm|clang|lld|libclang[^ ]*)\b//g' install.sh
           grep -n "apt install.*\(llvm\|clang\|lld\)" install.sh || true
 
-          # 【关键】导出完整工具链变量
-          export CC=clang-${LLVM_VER}
-          export CXX=clang++-${LLVM_VER}
-          export LD=ld.lld-${LLVM_VER}
-          export AR=llvm-ar-${LLVM_VER}
-          export NM=llvm-nm-${LLVM_VER}
-          export OBJCOPY=llvm-objcopy-${LLVM_VER}
-          export STRIP=llvm-strip-${LLVM_VER}
+          export CC=clang
+          export CXX=clang++
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export STRIP=llvm-strip
 
           echo "🚀 Starting Compilation..."
-          echo "   Compiler: ${CC} (LLVM ${LLVM_VER})"
+          echo "   Compiler: ${CC} (neutron-clang ${CLANG_VER})"
           echo "   Scheduler: ${CPU_SCHEDULER}"
           echo "   Version: ${NEW_VERSION}"
 
-          # 使用 sudo -E 保留环境变量
           sudo -E script -qec './install.sh install' /dev/null
 
           echo "::endgroup::"
@@ -222,17 +249,18 @@ jobs:
           tag_name: stable-v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
           name: Linux-TkG Stable ${{ env.NEW_VERSION }}
           body: |
-            Automated build of **Stable** Linux-TkG kernel with **Latest LLVM**.
+            Automated build of **Stable** Linux-TkG kernel with **neutron-clang**.
 
             **Configuration:**
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
-            - Compiler: **Clang/LLVM ${{ env.LLVM_VER }}**
+            - Compiler: **neutron-clang ${{ env.CLANG_VER }}** (tag ${{ env.TC_TAG }})
             - LTO: Thin
             - Arch Optimization: x86-64-v3
+            - Custom BORE Patch: **${{ github.event.inputs.custom_bore_patch != '' && 'yes' || 'auto' }}**
 
             **Notes:**
             - Optimized for performance and modern hardware.
-            - Built with latest stable LLVM toolchain.
+            - Built with neutron-clang (glibc-patched toolchain).
           files: |
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
@@ -249,7 +277,6 @@ jobs:
 
           BRANCH="${GITHUB_REF#refs/heads/}"
 
-          # 直接提交并推送，无重试逻辑
           git add customization-stable.cfg
           git commit -m "chore: update stable kernel version to ${NEW_VERSION}" || {
             echo "ℹ️ No changes to commit, skipping."
