@@ -55,6 +55,7 @@ jobs:
           chmod +x antman
 
           # 执行同步和 patch，但不要依赖执行后的 cwd
+          ./antman -S
           ./antman --patch=glibc
 
           # 关键：回到工具链根目录，确认结构
