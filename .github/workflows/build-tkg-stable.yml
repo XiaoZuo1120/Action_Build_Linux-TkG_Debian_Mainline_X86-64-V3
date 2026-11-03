@@ -40,70 +40,77 @@ jobs:
           exit 0
       - name: ⚡ Install neutron-clang & register alternatives
         if: env.SKIP_BUILD != 'true'
-        run: >
+        run: |
           echo "::group::⚡ Installing neutron-clang"
 
-
           sudo apt-get update -qq
-
           sudo apt-get install -y -qq patchelf
 
+          TC_ROOT="$HOME/toolchains/neutron-clang"
+          mkdir -p "$TC_ROOT"
 
-          mkdir -p "$HOME/toolchains/neutron-clang"
-
-          cd "$HOME/toolchains/neutron-clang"
-
-
+          # 下载 antman 到固定目录
+          cd "$TC_ROOT"
           curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
-
           chmod +x antman
 
+          # 执行同步和 patch，但不要依赖执行后的 cwd
           ./antman --patch=glibc
 
+          # 关键：回到工具链根目录，确认结构
+          cd "$TC_ROOT"
+          echo "🔍 Toolchain root contents:"
+          ls -la "$TC_ROOT"
 
-          CLANG_VER=$(grep -A1 '^\[clang-ver\]' build.info | tail -n1 | tr -d ' ')
+          # build.info 可能在 TC_ROOT 或 TC_ROOT 的某个子目录
+          BUILD_INFO=$(find "$TC_ROOT" -maxdepth 2 -name build.info | head -n1)
+          if [ -z "$BUILD_INFO" ]; then
+            echo "❌ build.info not found under $TC_ROOT"
+            exit 1
+          fi
+          echo "📄 Using build.info: $BUILD_INFO"
 
-          TC_TAG=$(grep -A1 '^\[tag\]' build.info | tail -n1 | tr -d ' ')
-
+          CLANG_VER=$(grep -A1 '^\[clang-ver\]' "$BUILD_INFO" | tail -n1 | tr -d ' ')
+          TC_TAG=$(grep -A1 '^\[tag\]' "$BUILD_INFO" | tail -n1 | tr -d ' ')
           echo "CLANG_VER=${CLANG_VER}" >> $GITHUB_ENV
-
           echo "TC_TAG=${TC_TAG}" >> $GITHUB_ENV
 
-
-          BIN="$HOME/toolchains/neutron-clang/bin"
+          # 找 bin/clang 的实际路径，不假设它一定在 TC_ROOT/bin
+          CLANG_BIN=$(find "$TC_ROOT" -maxdepth 3 -type f -name clang | head -n1)
+          if [ -z "$CLANG_BIN" ]; then
+            echo "❌ clang binary not found under $TC_ROOT"
+            echo "Directory tree:"
+            find "$TC_ROOT" -maxdepth 3 -type d
+            exit 1
+          fi
+          BIN_DIR=$(dirname "$CLANG_BIN")
+          echo "✅ Found clang at: $CLANG_BIN"
+          echo "✅ BIN_DIR: $BIN_DIR"
 
           PRIO=2400
 
-
-          sudo update-alternatives --install /usr/bin/clang   clang   "${BIN}/clang"   ${PRIO}
-
-          sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN}/clang++" ${PRIO}
-
-          sudo update-alternatives --install /usr/bin/clang-cpp clang-cpp "${BIN}/clang-cpp" ${PRIO}
-
-          sudo update-alternatives --install /usr/bin/ld.lld ld.lld "${BIN}/ld.lld" ${PRIO}
-
-          sudo update-alternatives --install /usr/bin/lld    lld    "${BIN}/lld"    ${PRIO}
-
+          # 用实际找到的 BIN_DIR 注册
+          sudo update-alternatives --install /usr/bin/clang   clang   "${BIN_DIR}/clang"   ${PRIO}
+          sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN_DIR}/clang++" ${PRIO}
+          sudo update-alternatives --install /usr/bin/clang-cpp clang-cpp "${BIN_DIR}/clang-cpp" ${PRIO}
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld "${BIN_DIR}/ld.lld" ${PRIO}
+          sudo update-alternatives --install /usr/bin/lld    lld    "${BIN_DIR}/lld"    ${PRIO}
 
           for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-readobj llvm-strip llvm-as; do
-            sudo update-alternatives --install "/usr/bin/${tool}" "${tool}" "${BIN}/${tool}" ${PRIO}
+            if [ -f "${BIN_DIR}/${tool}" ]; then
+              sudo update-alternatives --install "/usr/bin/${tool}" "${tool}" "${BIN_DIR}/${tool}" ${PRIO}
+            fi
           done
 
+          sudo update-alternatives --set clang   "${BIN_DIR}/clang"
+          sudo update-alternatives --set clang++ "${BIN_DIR}/clang++"
+          sudo update-alternatives --set ld.lld  "${BIN_DIR}/ld.lld"
 
-          sudo update-alternatives --set clang   "${BIN}/clang"
-
-          sudo update-alternatives --set clang++ "${BIN}/clang++"
-
-          sudo update-alternatives --set ld.lld  "${BIN}/ld.lld"
-
-
+          echo "🔍 Verification:"
           clang --version | head -n1
-
           ld.lld --version | head -n1
-
+          which clang
           echo "✅ neutron-clang ${CLANG_VER} (tag ${TC_TAG}) registered"
-
 
           echo "::endgroup::"
       - name: 🧹 Free Disk Space (Slimhub)
