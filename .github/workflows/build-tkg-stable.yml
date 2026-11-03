@@ -157,50 +157,6 @@ jobs:
           fi
 
           echo "::endgroup::"
-      - name: 🎯 Apply Custom BORE Patch (fallback)
-        if: env.SKIP_BUILD != 'true' && github.event.inputs.custom_bore_patch != ''
-        run: |
-          echo "::group::🎯 Applying custom BORE patch"
-          cd $TKG_DIR
-
-          PATCH_INPUT="${{ github.event.inputs.custom_bore_patch }}"
-          PATCH_FILE="/tmp/custom-bore.patch"
-
-          case "$PATCH_INPUT" in
-            http://*|https://*)
-              echo "📥 Downloading patch from URL..."
-              curl -fsSL "$PATCH_INPUT" -o "$PATCH_FILE"
-              ;;
-            *)
-              echo "📦 Decoding Base64 patch..."
-              echo "$PATCH_INPUT" | base64 -d > "$PATCH_FILE"
-              ;;
-          esac
-
-          if [ ! -s "$PATCH_FILE" ]; then
-            echo "❌ Patch file is empty or invalid."
-            exit 1
-          fi
-
-          echo "🔍 Patch preview:"
-          head -n 20 "$PATCH_FILE"
-
-          # TKG 的源码目录通常叫 linux-src-git；若不存在则回退到当前目录
-          SRC_DIR="linux-src-git"
-          if [ -d "$SRC_DIR" ]; then
-            cd "$SRC_DIR"
-          fi
-
-          if patch -p1 --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
-            patch -p1 < "$PATCH_FILE"
-            echo "✅ Custom BORE patch applied."
-          else
-            echo "⚠️ patch -p1 failed, trying -p0..."
-            patch -p0 < "$PATCH_FILE"
-            echo "✅ Custom BORE patch applied with -p0."
-          fi
-
-          echo "::endgroup::"
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
         run: >
