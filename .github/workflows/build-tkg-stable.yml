@@ -38,17 +38,6 @@ jobs:
         run: |
           echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
-      - name: 🔍 Check Latest Stable Kernel Version
-        id: check_version
-        run: |
-          chmod +x check_version-stable.sh
-          export FORCE_BUILD="${{ github.event.inputs.force_build }}"
-          ./check_version-stable.sh
-      - name: ⏭️ Skip Build if Up-to-date
-        if: env.SKIP_BUILD == 'true'
-        run: |
-          echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
-          exit 0
       - name: ⚡ Install neutron-clang & register alternatives
         if: env.SKIP_BUILD != 'true'
         run: >
