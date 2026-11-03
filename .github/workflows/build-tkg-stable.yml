@@ -1,6 +1,5 @@
 ---
 name: 🐧 Build Linux-TkG Stable Kernel (neutron-clang)
-
 on:
   workflow_dispatch:
     inputs:
@@ -10,115 +9,129 @@ on:
         default: "false"
         type: boolean
       custom_bore_patch:
-        description: "🎯 自定义 BORE 补丁（Base64 编码或 URL，留空则自动搜索）"
+        description: 🎯 自定义 BORE 补丁（Base64 编码或 URL，留空则自动搜索）
         required: false
         default: ""
         type: string
-#  schedule:
-#    - cron: '0 12 8,22 * *' # 每月 8 号和 22 号 UTC 12:00 (北京时间 20:00)
-
 env:
   TKG_DIR: linux-tkg
   DEBIAN_FRONTEND: noninteractive
   CFG_FILE: customization-stable.cfg
-
 jobs:
   prepare-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: 🔍 Check Latest Stable Kernel Version
         id: check_version
         run: |
           chmod +x check_version-stable.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-stable.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
-
       - name: 🔍 Check Latest Stable Kernel Version
         id: check_version
         run: |
           chmod +x check_version-stable.sh
           export FORCE_BUILD="${{ github.event.inputs.force_build }}"
           ./check_version-stable.sh
-
       - name: ⏭️ Skip Build if Up-to-date
         if: env.SKIP_BUILD == 'true'
         run: |
           echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
-
-      # ⬇️ 新增：neutron-clang 安装提前到 Slimhub 之前
       - name: ⚡ Install neutron-clang & register alternatives
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::⚡ Installing neutron-clang"
 
+
           sudo apt-get update -qq
+
           sudo apt-get install -y -qq patchelf
 
+
           mkdir -p "$HOME/toolchains/neutron-clang"
+
           cd "$HOME/toolchains/neutron-clang"
 
+
           curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+
           chmod +x antman
+
           ./antman --patch=glibc
 
+
           CLANG_VER=$(grep -A1 '^\[clang-ver\]' build.info | tail -n1 | tr -d ' ')
+
           TC_TAG=$(grep -A1 '^\[tag\]' build.info | tail -n1 | tr -d ' ')
+
           echo "CLANG_VER=${CLANG_VER}" >> $GITHUB_ENV
+
           echo "TC_TAG=${TC_TAG}" >> $GITHUB_ENV
 
+
           BIN="$HOME/toolchains/neutron-clang/bin"
+
           PRIO=2400
 
+
           sudo update-alternatives --install /usr/bin/clang   clang   "${BIN}/clang"   ${PRIO}
+
           sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN}/clang++" ${PRIO}
+
           sudo update-alternatives --install /usr/bin/clang-cpp clang-cpp "${BIN}/clang-cpp" ${PRIO}
+
           sudo update-alternatives --install /usr/bin/ld.lld ld.lld "${BIN}/ld.lld" ${PRIO}
+
           sudo update-alternatives --install /usr/bin/lld    lld    "${BIN}/lld"    ${PRIO}
+
 
           for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-readobj llvm-strip llvm-as; do
             sudo update-alternatives --install "/usr/bin/${tool}" "${tool}" "${BIN}/${tool}" ${PRIO}
           done
 
+
           sudo update-alternatives --set clang   "${BIN}/clang"
+
           sudo update-alternatives --set clang++ "${BIN}/clang++"
+
           sudo update-alternatives --set ld.lld  "${BIN}/ld.lld"
 
+
           clang --version | head -n1
+
           ld.lld --version | head -n1
+
           echo "✅ neutron-clang ${CLANG_VER} (tag ${TC_TAG}) registered"
 
-          echo "::endgroup::"
 
-      # ⬇️ Slimhub 移到 neutron-clang 安装之后
+          echo "::endgroup::"
       - name: 🧹 Free Disk Space (Slimhub)
         if: env.SKIP_BUILD != 'true'
         uses: rokibhasansagar/slimhub_actions@main
-
-      # ⬇️ 新增：Slimhub 之后验证 neutron-clang 仍然可用
       - name: ✅ Verify neutron-clang after Slimhub
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "🔍 Post-Slimhub verification:"
-          clang --version | head -n1 || { echo "❌ clang broken after Slimhub"; exit 1; }
-          ld.lld --version | head -n1 || { echo "❌ ld.lld broken after Slimhub"; exit 1; }
-          which clang
-          echo "✅ neutron-clang still functional"
 
+          clang --version | head -n1 || { echo "❌ clang broken after Slimhub"; exit 1; }
+
+          ld.lld --version | head -n1 || { echo "❌ ld.lld broken after Slimhub"; exit 1; }
+
+          which clang
+
+          echo "✅ neutron-clang still functional"
       - name: 📅 Generate Build Timestamp
         if: env.SKIP_BUILD != 'true'
         id: timestamp
@@ -126,26 +139,25 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d%H%M")
           echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
           echo "Generated Timestamp: $TIMESTAMP"
-
-      # 后续步骤（Optimize Git、Clone TKG、BORE、Config、Compile、Cleanup、Release、Commit）保持不变
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
           git config --global http.postBuffer 524288000
           git config --global core.compression 9
           git config --global advice.detachedHead false
-
       - name: 📂 Clone Linux-TkG Repository
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📂 Cloning TKG"
-          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
-          echo "::endgroup::"
 
+          git clone --depth 1 https://github.com/Frogging-Family/linux-tkg.git $TKG_DIR
+
+          echo "::endgroup::"
       - name: 🤖 Auto-Configure BORE & Patches
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::🤖 BORE Configuration"
+
           if [ -f "./auto_bore_setup.sh" ]; then
             chmod +x ./auto_bore_setup.sh
             export CFG_FILE="./customization-stable.cfg"
@@ -155,8 +167,8 @@ jobs:
           else
             echo "⚠️ auto_bore_setup.sh not found, skipping."
           fi
-          echo "::endgroup::"
 
+          echo "::endgroup::"
       - name: 🎯 Apply Custom BORE Patch (fallback)
         if: env.SKIP_BUILD != 'true' && github.event.inputs.custom_bore_patch != ''
         run: |
@@ -201,54 +213,79 @@ jobs:
           fi
 
           echo "::endgroup::"
-
       - name: 📝 Prepare Final Configuration
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::📝 Final Config Prep"
+
           cd $TKG_DIR
+
 
           cp ../customization-stable.cfg ./customization.cfg
 
+
           sed -i 's/^_compiler=.*/_compiler="llvm"/' customization.cfg
+
           sed -i 's/^_lto_mode=.*/_lto_mode="thin"/' customization.cfg
+
           sed -i 's/^_llvm_ias=.*/_llvm_ias="1"/' customization.cfg
+
           sed -i 's|^CUSTOM_LLVM_PATH=.*|CUSTOM_LLVM_PATH=""|' customization.cfg
 
+
           ACTUAL_SCHEDULER=$(grep '^_cpusched=' ./customization.cfg | head -n 1 | sed 's/_cpusched=//; s/"//g; s/^ *//; s/ *$//')
+
           echo "CPU_SCHEDULER=${ACTUAL_SCHEDULER}" >> $GITHUB_ENV
 
-          echo "--- 📋 最终构建配置 ---"
-          grep -E "_version|_cpusched|_compiler|_lto_mode|CUSTOM_LLVM_PATH" ./customization.cfg
-          echo "----------------------"
-          echo "::endgroup::"
 
+          echo "--- 📋 最终构建配置 ---"
+
+          grep -E "_version|_cpusched|_compiler|_lto_mode|CUSTOM_LLVM_PATH" ./customization.cfg
+
+          echo "----------------------"
+
+          echo "::endgroup::"
       - name: 🔨 Compile Kernel
         if: env.SKIP_BUILD != 'true'
-        run: |
+        run: >
           echo "::group::🔨 Kernel Compilation"
+
           cd $TKG_DIR
 
+
           sed -i -E '/apt(-get)?[[:space:]]+install/s/\b(llvm|clang|lld|libclang[^ ]*)\b//g' install.sh
+
           grep -n "apt install.*\(llvm\|clang\|lld\)" install.sh || true
 
+
           export CC=clang
+
           export CXX=clang++
+
           export LD=ld.lld
+
           export AR=llvm-ar
+
           export NM=llvm-nm
+
           export OBJCOPY=llvm-objcopy
+
           export STRIP=llvm-strip
 
+
           echo "🚀 Starting Compilation..."
+
           echo "   Compiler: ${CC} (neutron-clang ${CLANG_VER})"
+
           echo "   Scheduler: ${CPU_SCHEDULER}"
+
           echo "   Version: ${NEW_VERSION}"
+
 
           sudo -E script -qec './install.sh install' /dev/null
 
-          echo "::endgroup::"
 
+          echo "::endgroup::"
       - name: 🗑️ Cleanup Artifacts & Source
         if: always()
         run: |
@@ -262,51 +299,66 @@ jobs:
             ls -lh $TKG_DIR/DEBS/
           fi
           echo "::endgroup::"
-
       - name: 🏷️ Create GitHub Release
         if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: stable-v${{ env.NEW_VERSION }}-${{ env.BUILD_TIMESTAMP }}
           name: Linux-TkG Stable ${{ env.NEW_VERSION }}
-          body: |
+          body: >
             Automated build of **Stable** Linux-TkG kernel with **neutron-clang**.
 
+
             **Configuration:**
+
             - Scheduler: **${{ env.CPU_SCHEDULER }}**
+
             - Compiler: **neutron-clang ${{ env.CLANG_VER }}** (tag ${{ env.TC_TAG }})
+
             - LTO: Thin
+
             - Arch Optimization: x86-64-v3
+
             - Custom BORE Patch: **${{ github.event.inputs.custom_bore_patch != '' && 'yes' || 'auto' }}**
 
+
             **Notes:**
+
             - Optimized for performance and modern hardware.
+
             - Built with neutron-clang (glibc-patched toolchain).
           files: |
             ${{ env.TKG_DIR }}/DEBS/*.deb
             ${{ env.TKG_DIR }}/kernelconfig.new
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: 💾 Commit Updated Config
         if: env.VERSION_CHANGED == 'true'
-        run: |
+        run: >
           echo "::group::💾 Git Commit & Push"
 
+
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
+
           git config --local user.name "github-actions[bot]"
+
 
           BRANCH="${GITHUB_REF#refs/heads/}"
 
+
           git add customization-stable.cfg
+
           git commit -m "chore: update stable kernel version to ${NEW_VERSION}" || {
             echo "ℹ️ No changes to commit, skipping."
             echo "::endgroup::"
             exit 0
           }
+
           git push origin "HEAD:$BRANCH"
 
+
           echo "✅ Commit & Push successful!"
+
           echo "::endgroup::"
         env:
           NEW_VERSION: ${{ env.NEW_VERSION }}
