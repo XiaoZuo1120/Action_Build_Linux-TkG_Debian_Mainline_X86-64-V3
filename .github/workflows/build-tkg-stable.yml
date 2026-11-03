@@ -63,7 +63,6 @@ jobs:
           echo "🔍 Toolchain root contents:"
           ls -la "$TC_ROOT"
 
-          # build.info 可能在 TC_ROOT 或 TC_ROOT 的某个子目录
           BUILD_INFO=$(find "$TC_ROOT" -maxdepth 2 -name build.info | head -n1)
           if [ -z "$BUILD_INFO" ]; then
             echo "❌ build.info not found under $TC_ROOT"
@@ -76,21 +75,19 @@ jobs:
           echo "CLANG_VER=${CLANG_VER}" >> $GITHUB_ENV
           echo "TC_TAG=${TC_TAG}" >> $GITHUB_ENV
 
-          # 找 bin/clang 的实际路径，不假设它一定在 TC_ROOT/bin
-          CLANG_BIN=$(find "$TC_ROOT" -maxdepth 3 -type f -name clang | head -n1)
-          if [ -z "$CLANG_BIN" ]; then
-            echo "❌ clang binary not found under $TC_ROOT"
-            echo "Directory tree:"
-            find "$TC_ROOT" -maxdepth 3 -type d
+          # bin 目录直接固定为 TC_ROOT/bin（antman 的布局就是 bin/ 在根下）
+          BIN_DIR="$TC_ROOT/bin"
+          if [ ! -e "${BIN_DIR}/clang" ]; then
+            echo "❌ clang not found at ${BIN_DIR}/clang"
+            echo "Directory listing of ${BIN_DIR}:"
+            ls -la "$BIN_DIR"
             exit 1
           fi
-          BIN_DIR=$(dirname "$CLANG_BIN")
-          echo "✅ Found clang at: $CLANG_BIN"
-          echo "✅ BIN_DIR: $BIN_DIR"
+          echo "✅ Found clang at: ${BIN_DIR}/clang"
+          echo "✅ BIN_DIR: ${BIN_DIR}"
 
           PRIO=2400
 
-          # 用实际找到的 BIN_DIR 注册
           sudo update-alternatives --install /usr/bin/clang   clang   "${BIN_DIR}/clang"   ${PRIO}
           sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN_DIR}/clang++" ${PRIO}
           sudo update-alternatives --install /usr/bin/clang-cpp clang-cpp "${BIN_DIR}/clang-cpp" ${PRIO}
@@ -98,7 +95,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/lld    lld    "${BIN_DIR}/lld"    ${PRIO}
 
           for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-readobj llvm-strip llvm-as; do
-            if [ -f "${BIN_DIR}/${tool}" ]; then
+            if [ -e "${BIN_DIR}/${tool}" ]; then
               sudo update-alternatives --install "/usr/bin/${tool}" "${tool}" "${BIN_DIR}/${tool}" ${PRIO}
             fi
           done
@@ -106,12 +103,6 @@ jobs:
           sudo update-alternatives --set clang   "${BIN_DIR}/clang"
           sudo update-alternatives --set clang++ "${BIN_DIR}/clang++"
           sudo update-alternatives --set ld.lld  "${BIN_DIR}/ld.lld"
-
-          echo "🔍 Verification:"
-          clang --version | head -n1
-          ld.lld --version | head -n1
-          which clang
-          echo "✅ neutron-clang ${CLANG_VER} (tag ${TC_TAG}) registered"
 
           echo "::endgroup::"
       - name: 🧹 Free Disk Space (Slimhub)
