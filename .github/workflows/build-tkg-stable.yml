@@ -47,18 +47,20 @@ jobs:
           echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
           exit 0
 
-      - name: 🧹 Free Disk Space (Slimhub)
-        if: env.SKIP_BUILD != 'true'
-        uses: rokibhasansagar/slimhub_actions@main
-
-      - name: 📅 Generate Build Timestamp
-        if: env.SKIP_BUILD != 'true'
-        id: timestamp
+      - name: 🔍 Check Latest Stable Kernel Version
+        id: check_version
         run: |
-          TIMESTAMP=$(date -u +"%Y%m%d%H%M")
-          echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
-          echo "Generated Timestamp: $TIMESTAMP"
+          chmod +x check_version-stable.sh
+          export FORCE_BUILD="${{ github.event.inputs.force_build }}"
+          ./check_version-stable.sh
 
+      - name: ⏭️ Skip Build if Up-to-date
+        if: env.SKIP_BUILD == 'true'
+        run: |
+          echo "✅ 稳定版内核版本已是最新 (${{ env.NEW_VERSION }})，无需操作。"
+          exit 0
+
+      # ⬇️ 新增：neutron-clang 安装提前到 Slimhub 之前
       - name: ⚡ Install neutron-clang & register alternatives
         if: env.SKIP_BUILD != 'true'
         run: |
@@ -73,6 +75,7 @@ jobs:
           curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
           chmod +x antman
 
+          ./antman -S --noaria2c
           ./antman --patch=glibc
 
           CLANG_VER=$(grep -A1 '^\[clang-ver\]' build.info | tail -n1 | tr -d ' ')
@@ -82,8 +85,6 @@ jobs:
 
           BIN="$HOME/toolchains/neutron-clang/bin"
           PRIO=2400
-
-          echo "🔄 Registering alternatives from ${BIN}..."
 
           sudo update-alternatives --install /usr/bin/clang   clang   "${BIN}/clang"   ${PRIO}
           sudo update-alternatives --install /usr/bin/clang++ clang++ "${BIN}/clang++" ${PRIO}
@@ -99,14 +100,36 @@ jobs:
           sudo update-alternatives --set clang++ "${BIN}/clang++"
           sudo update-alternatives --set ld.lld  "${BIN}/ld.lld"
 
-          echo "🔍 Verification:"
           clang --version | head -n1
           ld.lld --version | head -n1
-          which clang
           echo "✅ neutron-clang ${CLANG_VER} (tag ${TC_TAG}) registered"
 
           echo "::endgroup::"
 
+      # ⬇️ Slimhub 移到 neutron-clang 安装之后
+      - name: 🧹 Free Disk Space (Slimhub)
+        if: env.SKIP_BUILD != 'true'
+        uses: rokibhasansagar/slimhub_actions@main
+
+      # ⬇️ 新增：Slimhub 之后验证 neutron-clang 仍然可用
+      - name: ✅ Verify neutron-clang after Slimhub
+        if: env.SKIP_BUILD != 'true'
+        run: |
+          echo "🔍 Post-Slimhub verification:"
+          clang --version | head -n1 || { echo "❌ clang broken after Slimhub"; exit 1; }
+          ld.lld --version | head -n1 || { echo "❌ ld.lld broken after Slimhub"; exit 1; }
+          which clang
+          echo "✅ neutron-clang still functional"
+
+      - name: 📅 Generate Build Timestamp
+        if: env.SKIP_BUILD != 'true'
+        id: timestamp
+        run: |
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M")
+          echo "BUILD_TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          echo "Generated Timestamp: $TIMESTAMP"
+
+      # 后续步骤（Optimize Git、Clone TKG、BORE、Config、Compile、Cleanup、Release、Commit）保持不变
       - name: ⚙️ Optimize Git for Large Repos
         if: env.SKIP_BUILD != 'true'
         run: |
